@@ -37,6 +37,13 @@ public class Digest implements Streamable, Iterable<Digest.DigestEntry> {
         this.seqnos=seqnos;
     }
 
+    protected Digest(List<Address> members, long[] seqnos) {
+        this.members=new Address[members.size()];
+        for(int i=0; i < members.size(); i++)
+            this.members[i]=members.get(i);
+        this.seqnos=seqnos;
+    }
+
     /** Used for serialization */
     public Digest() {
     }

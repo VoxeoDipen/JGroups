@@ -4,16 +4,23 @@ package org.jgroups.tests;
 
 import org.jgroups.Address;
 import org.jgroups.Global;
+import org.jgroups.View;
+import org.jgroups.util.Buffer;
 import org.jgroups.util.Digest;
 import org.jgroups.util.MutableDigest;
 import org.jgroups.util.Util;
 import org.testng.Assert;
-import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.BeforeClass;
+import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
-import java.io.*;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -26,15 +33,13 @@ public class DigestTest {
     Address        a1, a2, a3;
 
 
-    @BeforeClass
-    void beforeClass() throws Exception {
+    @BeforeClass void beforeClass() throws Exception {
         a1=Util.createRandomAddress("a1");
         a2=Util.createRandomAddress("a2");
         a3=Util.createRandomAddress("a3");
     }
 
-    @BeforeMethod
-    void beforeMethod() {
+    @BeforeMethod void beforeMethod() {
         Map<Address, long[]> map=new HashMap<Address, long[]>();
         map.put(a1, new long[]{500, 501});
         map.put(a2, new long[]{26, 26});
@@ -557,6 +562,60 @@ public class DigestTest {
         Assert.assertEquals(len, buf.length);
     }
 
+
+    /**
+     * Tests methods {@link Util#digestToBuffer(org.jgroups.View,org.jgroups.util.Digest)} and
+     * {@link Util#digestFromBuffer(org.jgroups.View,byte[])}.
+     */
+    public void testViewBasedMarshalling() throws Exception {
+        View view=Util.createView(a1, 5, a1, a2, a3);
+        Buffer buf=Util.digestToBuffer(view,d);
+        Digest new_digest=Util.digestFromBuffer(view, buf);
+        System.out.println("new_digest = " + new_digest);
+        assert new_digest.equals(d);
+
+        // view changed, so we should get an exception
+        view=Util.createView(a1, 6, a1, a2); // a3 left
+        try {
+            new_digest=Util.digestFromBuffer(view, buf);
+        }
+        catch(IllegalStateException ex) {
+            System.out.println("got \"" + ex + "\" as expected");
+        }
+    }
+
+    public void testViewBasedMarshallingLargeView() throws Exception {
+        final int DIGEST_SIZE=1000;
+        Address coord=Util.createRandomAddress("coord");
+        List<Address> members=new ArrayList<Address>();
+        members.add(coord);
+        for(int i=1; i < DIGEST_SIZE; i++)
+            members.add(Util.createRandomAddress(String.valueOf(i)));
+
+        Map<Address,long[]> map=new HashMap<Address,long[]>(members.size());
+        for(Address member: members) {
+            int hd=(int)Util.random(Integer.MAX_VALUE);
+            map.put(member, new long[]{hd, hd + Util.random(1000)});
+        }
+
+        View view=Util.createView(coord, 5, members.toArray(new Address[]{coord}));
+        Digest digest=new Digest(map);
+
+        byte[] buf1=Util.streamableToByteBuffer(digest);
+        System.out.println("buf1: " + buf1.length + " bytes");
+
+        Buffer buf2=Util.digestToBuffer(view,digest);
+        System.out.println("buf2: " + buf2.getLength() + " bytes");
+
+        Digest digest1=(Digest)Util.streamableFromByteBuffer(Digest.class,buf1);
+        Digest digest2=Util.digestFromBuffer(view, buf2.getBuf());
+
+        assert digest.equals(digest1);
+        assert digest.equals(digest2);
+
+        System.out.println("digest1 = " + digest1);
+        System.out.println("digest2 = " + digest2);
+    }
 
 
 }

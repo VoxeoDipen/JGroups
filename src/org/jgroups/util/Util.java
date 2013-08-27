@@ -1160,6 +1160,50 @@ public class Util {
     }
 
 
+    /** Generates a buffer from a digest. Writes the ViewId first, and the members are simply indices into the
+     * view. The receiving side needs to have access to the same view to decode the buffer. */
+    public static Buffer digestToBuffer(final View view, final Digest digest) throws Exception {
+        assert view != null && digest != null;
+        ExposedByteArrayOutputStream output=new ExposedByteArrayOutputStream(digest.size() * 10); // ~ 10 bytes per member
+        ExposedDataOutputStream out=new ExposedDataOutputStream(output);
+        view.getViewId().writeTo(out);
+
+        for(Address member: view) {
+            long[] seqnos=digest.get(member);
+            if(seqnos == null)
+                throw new IllegalStateException("members in view and digest differ: view=" + view + ", digest=" + digest);
+            Util.writeLongSequence(seqnos[0], seqnos[1], out);
+        }
+        return output.getBuffer();
+    }
+
+
+    /** Reads a digest encoded with {@link #digestToBuffer(org.jgroups.View,Digest)}. If the view ID encoded in
+     * the buffer is not the same as the expected view, an exception is thrown. */
+    public static Digest digestFromBuffer(final View expected, final byte[] buffer) throws Exception {
+        assert expected != null && buffer != null;
+        ExposedByteArrayInputStream input=new ExposedByteArrayInputStream(buffer);
+        DataInput in=new DataInputStream(input);
+        ViewId view_id=new ViewId();
+        view_id.readFrom(in);
+
+        if(!view_id.equals(expected.getViewId()))
+            throw new IllegalStateException("view IDs don't match: received=" + view_id + ", expected=" + expected.getViewId());
+
+        int length=expected.size();
+        long[] seqnos=new long[length *2];
+        for(int i=0; i < length; i++) {
+            long[] seqno_pair=Util.readLongSequence(in);
+            seqnos[i*2]=seqno_pair[0];
+            seqnos[i*2+1]=seqno_pair[1];
+        }
+        return new Digest(expected.getMembers(), seqnos);
+    }
+
+    public static Digest digestFromBuffer(final View expected, final Buffer buffer) throws Exception {
+        return digestFromBuffer(expected, buffer.getBuf());
+    }
+
 
     public static void writeString(String s, DataOutput out) throws Exception {
         if(s != null) {
