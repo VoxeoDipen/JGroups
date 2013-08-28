@@ -67,9 +67,6 @@ public class Digest implements Streamable, Iterable<Digest.DigestEntry> {
         seqnos=new long[]{highest_delivered,highest_received};
     }
 
-    public Digest(Address sender, long highest_delivered) {
-        this(sender, highest_delivered, highest_delivered);
-    }
 
     public boolean contains(Address member) {
         for(int i=0; i < size(); i++) {
@@ -282,7 +279,7 @@ public class Digest implements Streamable, Iterable<Digest.DigestEntry> {
             if(their_entry == null)
                 continue;
             long my_highest=entry.getHighest();
-            long their_highest=Math.max(their_entry[0], their_entry[1]);
+            long their_highest=max(their_entry[0],their_entry[1]);
             if(my_highest < their_highest)
                 return false;
         }
