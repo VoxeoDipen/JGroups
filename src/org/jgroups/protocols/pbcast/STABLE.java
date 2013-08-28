@@ -84,6 +84,7 @@ public class STABLE extends Protocol {
 
     
     protected Address             local_addr;
+    protected volatile View       view;
     protected final Set<Address>  mbrs=new LinkedHashSet<Address>(); // we don't need ordering here
 
     @GuardedBy("lock")
@@ -149,7 +150,7 @@ public class STABLE extends Protocol {
         this.max_bytes=max_bytes;
     }
 
-    @ManagedAttribute(name="bytes_received")
+    // @ManagedAttribute(name="bytes_received")
     public long getBytes() {return num_bytes_received;}
     @ManagedAttribute
     public int getStableSent() {return num_stable_msgs_sent;}
@@ -243,8 +244,7 @@ public class STABLE extends Protocol {
 
             case Event.VIEW_CHANGE:
                 Object retval=up_prot.up(evt);
-                View view=(View)evt.getArg();
-                handleViewChange(view);
+                handleViewChange((View)evt.getArg());
                 return retval;
         }
         return up_prot.up(evt);
@@ -253,10 +253,10 @@ public class STABLE extends Protocol {
     protected void handleUpEvent(StableHeader hdr, Address sender) {
         switch(hdr.type) {
             case StableHeader.STABLE_GOSSIP:
-                handleStableMessage(hdr.stableDigest, sender);
+                handleStableMessage(hdr.digest, sender);
                 break;
             case StableHeader.STABILITY:
-                handleStabilityMessage(hdr.stableDigest, sender);
+                handleStabilityMessage(hdr.digest, sender);
                 break;
             default:
                 if(log.isErrorEnabled()) log.error("StableHeader type " + hdr.type + " not known");
@@ -342,8 +342,7 @@ public class STABLE extends Protocol {
         switch(evt.getType()) {
             case Event.VIEW_CHANGE:
                 Object retval=down_prot.down(evt);
-                View v=(View)evt.getArg();
-                handleViewChange(v);
+                handleViewChange((View)evt.getArg());
                 return retval;
 
             case Event.SUSPEND_STABLE:
@@ -382,6 +381,7 @@ public class STABLE extends Protocol {
 
 
     protected void handleViewChange(View v) {
+        this.view=v;
         List<Address> tmp=v.getMembers();
         synchronized(mbrs) {
             mbrs.clear();
@@ -573,25 +573,29 @@ public class STABLE extends Protocol {
      maximum of all seqnos will be taken to trigger possible retransmission of last missing seqno (see DESIGN
      for details).
      */
-    protected void handleStableMessage(Digest d, Address sender) {
-        if(d == null || sender == null) {
+    protected void handleStableMessage(Buffer serialized_digest, Address sender) {
+        if(serialized_digest == null || sender == null) {
             if(log.isErrorEnabled()) log.error("digest or sender is null");
             return;
         }
 
-        if(!initialized) {
+        if(!initialized || suspended) {
             if(log.isTraceEnabled())
-                log.trace("STABLE message will not be handled as I'm not yet initialized");
+                log.trace("STABLE message will not be handled: initialized=" + initialized + ", suspended=" + suspended);
             return;
         }
 
-        if(suspended) {
-            if(log.isTraceEnabled())
-                log.trace("STABLE message will not be handled as I'm suspended");
+        View current_view=view;
+        Digest copy=null, d;
+
+        try {
+            d=Util.digestFromBuffer(current_view, serialized_digest);
+        }
+        catch(Exception e) {
+            log.warn("failed unmarshalling buffer into digest, dropping STABLE message", e);
             return;
         }
 
-        Digest copy=null;
         lock.lock();
         try {
             if(votes.contains(sender))  // already received gossip from sender; discard it
@@ -633,28 +637,31 @@ public class STABLE extends Protocol {
     }
 
 
-    protected void handleStabilityMessage(Digest stable_digest, Address sender) {
-        if(stable_digest == null) {
+    protected void handleStabilityMessage(Buffer serialized_digest, Address sender) {
+        if(serialized_digest == null) {
             if(log.isErrorEnabled()) log.error("stability digest is null");
             return;
         }
 
-        if(!initialized) {
+        if(!initialized || suspended) {
             if(log.isTraceEnabled())
-                log.trace("STABLE message will not be handled as I'm not yet initialized");
-            return;
-        }
-
-        if(suspended) {
-            if(log.isDebugEnabled()) {
-                log.debug("stability message will not be handled as I'm suspended");
-            }
+                log.trace("STABLE message will not be handled: initialized=" + initialized + ", suspended=" + suspended);
             return;
         }
 
         // received my own STABILITY message - no need to handle it as I already reset my digest before I sent the msg
         if(local_addr != null && local_addr.equals(sender)) {
             num_stability_msgs_received++;
+            return;
+        }
+
+        Digest stable_digest=null;
+        View current_view=view;
+        try {
+            stable_digest=Util.digestFromBuffer(current_view, serialized_digest);
+        }
+        catch(Exception e) {
+            log.warn("failed unmarshalling STABILITY message", e);
             return;
         }
 
@@ -690,9 +697,8 @@ public class STABLE extends Protocol {
 
 
     /**
-     * Bcasts a STABLE message of the current digest to all members. Message contains highest seqnos of all members
-     * seen by this member. Highest seqnos are retrieved from the NAKACK layer below.
-     * @param d A <em>copy</em> of this.digest
+     * Broadcasts a STABLE message of the current digest to all members (or the coordinator only). The message contains
+     * the highest seqno delivered and received for all members. The seqnos are retrieved from the NAKACK layer below.
      */
     protected void sendStableMessage(Digest d) {
         if(suspended) {
@@ -702,24 +708,30 @@ public class STABLE extends Protocol {
         }
 
         if(d != null && d.size() > 0) {
+            View current_view=view;
             Address dest=send_stable_msgs_to_coord_only? coordinator : null;
             if(log.isTraceEnabled())
                 log.trace(local_addr + ": sending stable msg to " + (send_stable_msgs_to_coord_only? coordinator : "cluster") +
                             ": " + d.printHighestDeliveredSeqnos());
-            num_stable_msgs_sent++;
-            final Message msg=new Message(dest).setFlag(Message.Flag.OOB, Message.Flag.INTERNAL, Message.Flag.NO_RELIABILITY)
-              .putHeader(this.id,new StableHeader(StableHeader.STABLE_GOSSIP,d));
 
-            Runnable r=new Runnable() {
-                public void run() {
-                    down_prot.down(new Event(Event.MSG, msg));
-                }
+            try {
+                Buffer buf=Util.digestToBuffer(current_view, d);
+                final Message msg=new Message(dest).setFlag(Message.Flag.OOB, Message.Flag.INTERNAL, Message.Flag.NO_RELIABILITY)
+                  .putHeader(this.id, new StableHeader(StableHeader.STABLE_GOSSIP, buf));
+                Runnable r=new Runnable() {
+                    public void run() {
+                        down_prot.down(new Event(Event.MSG, msg));
+                        num_stable_msgs_sent++;
+                    }
+                    public String toString() {return STABLE.class.getSimpleName() + ": STABLE-GOSSIP";}
+                };
 
-                public String toString() {return STABLE.class.getSimpleName() + ": STABLE-GOSSIP";}
-            };
-
-            // Run in a separate thread so we don't potentially block (http://jira.jboss.com/jira/browse/JGRP-532)
-            timer.execute(r);
+                // Run in a separate thread so we don't potentially block (http://jira.jboss.com/jira/browse/JGRP-532)
+                timer.execute(r);
+            }
+            catch(Throwable t) {
+                log.warn("failed sending STABLE message", t);
+            }
         }
     }
 
@@ -745,13 +757,19 @@ public class STABLE extends Protocol {
         // give other members a chance to mcast STABILITY message. if we receive STABILITY by the end of our random
         // sleep, we will not send the STABILITY msg. this prevents that all mbrs mcast a STABILITY msg at the same time
         long delay=Util.random(stability_delay);
-        if(log.isTraceEnabled()) log.trace(local_addr + ": sending stability msg (in " + delay + " ms) " + tmp.printHighestDeliveredSeqnos());
         startStabilityTask(tmp, delay);
     }
 
 
     protected Digest getDigest() {
         return (Digest)down_prot.down(Event.GET_DIGEST_EVT);
+    }
+
+    protected boolean viewMatchesDigest(final View view, final Digest digest, String message) {
+        boolean result=Util.digestMatchesView(digest, view);
+        if(!result)
+            log.warn(message + " (view=" + view + ", digest=" + digest + ")");
+        return result;
     }
 
 
@@ -764,23 +782,23 @@ public class STABLE extends Protocol {
 
 
     public static class StableHeader extends Header {
-        public static final int STABLE_GOSSIP=1;
-        public static final int STABILITY=2;
+        public static final byte STABLE_GOSSIP=1;
+        public static final byte STABILITY=2;
 
-        protected int    type;
-        protected Digest stableDigest; // changed by Bela April 4 2004
+        protected byte   type;
+        protected Buffer digest; // serialized digest, read and written using Util.digest{From,To}Buffer()
 
         public StableHeader() {
         }
 
 
-        public StableHeader(int type, Digest digest) {
+        public StableHeader(byte type, final Buffer digest) {
             this.type=type;
-            this.stableDigest=digest;
+            this.digest=digest;
         }
 
 
-        static String type2String(int t) {
+        static String type2String(byte t) {
             switch(t) {
                 case STABLE_GOSSIP:
                     return "STABLE_GOSSIP";
@@ -795,26 +813,33 @@ public class STABLE extends Protocol {
             StringBuilder sb=new StringBuilder();
             sb.append('[');
             sb.append(type2String(type));
-            sb.append("]: digest is ");
-            sb.append(stableDigest);
+            sb.append("]: digest ");
+            sb.append("(" + digest.getLength() + " bytes)");
             return sb.toString();
         }
 
         public int size() {
-            int retval=Global.INT_SIZE + Global.BYTE_SIZE; // type + presence for digest
-            if(stableDigest != null)
-                retval+=stableDigest.serializedSize();
+            int retval=Global.BYTE_SIZE + Global.INT_SIZE; // type + size (0 = no digest)
+            if(digest != null)
+                retval+=digest.getLength();
             return retval;
         }
 
         public void writeTo(DataOutput out) throws Exception {
-            out.writeInt(type);
-            Util.writeStreamable(stableDigest, out);
+            out.writeByte(type);
+            out.writeInt(digest != null? digest.getLength() : 0);
+            if(digest != null)
+                out.write(digest.getBuf(), digest.getOffset(), digest.getLength());
         }
 
         public void readFrom(DataInput in) throws Exception {
-            type=in.readInt();
-            stableDigest=(Digest)Util.readStreamable(Digest.class, in);
+            type=in.readByte();
+            int length=in.readInt();
+            if(length > 0) {
+                byte[] tmp=new byte[length];
+                in.readFully(tmp, 0, length);
+                digest=new Buffer(tmp, 0, length);
+            }
         }
     }
 
@@ -848,9 +873,8 @@ public class STABLE extends Protocol {
                     log.warn("received null digest, skipped sending of stable message");
                 return;
             }
-            if(log.isTraceEnabled())
-                log.trace(local_addr + ": setting latest_local_digest from NAKACK: " + my_digest.printHighestDeliveredSeqnos());
-            sendStableMessage(my_digest);
+            if(view != null && viewMatchesDigest(view, digest, "view does not match digest, dropping STABLE message"))
+                sendStableMessage(my_digest);
         }
 
         public String toString() {return STABLE.class.getSimpleName() + ": StableTask";}
@@ -872,10 +896,13 @@ public class STABLE extends Protocol {
      * Multicasts a STABILITY message.
      */
     protected class StabilitySendTask implements Runnable {
-        Digest stability_digest=null;
+        protected final Digest stability_digest;
+        protected final View   current_view;
+
 
         StabilitySendTask(Digest d) {
             this.stability_digest=d;
+            this.current_view=view;
         }
 
         public void run() {
@@ -889,12 +916,19 @@ public class STABLE extends Protocol {
             if(stability_digest != null) {
                 // https://issues.jboss.org/browse/JGRP-1638: we reverted to sending the STABILITY message *unreliably*,
                 // but clear votes *before* sending it
-                Message msg=new Message().setFlag(Message.Flag.OOB, Message.Flag.INTERNAL, Message.Flag.NO_RELIABILITY);
-                StableHeader hdr=new StableHeader(StableHeader.STABILITY, stability_digest);
-                msg.putHeader(id, hdr);
-                if(log.isTraceEnabled()) log.trace(local_addr + ": sending stability msg " + stability_digest.printHighestDeliveredSeqnos());
-                num_stability_msgs_sent++;
-                down_prot.down(new Event(Event.MSG, msg));
+                try {
+                    Buffer buf=Util.digestToBuffer(current_view, stability_digest);
+                    Message msg=new Message().setFlag(Message.Flag.OOB, Message.Flag.INTERNAL, Message.Flag.NO_RELIABILITY);
+                    StableHeader hdr=new StableHeader(StableHeader.STABILITY, buf);
+                    msg.putHeader(id, hdr);
+                    if(log.isTraceEnabled())
+                        log.trace(local_addr + ": sending stability msg " + stability_digest.printHighestDeliveredSeqnos());
+                    num_stability_msgs_sent++;
+                    down_prot.down(new Event(Event.MSG, msg));
+                }
+                catch(Exception e) {
+                    log.warn("failed sending STABILITY message", e);
+                }
             }
         }
 

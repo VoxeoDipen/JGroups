@@ -1201,7 +1201,61 @@ public class Util {
     }
 
     public static Digest digestFromBuffer(final View expected, final Buffer buffer) throws Exception {
-        return digestFromBuffer(expected, buffer.getBuf());
+        return digestFromBuffer(expected,buffer.getBuf());
+    }
+
+    public static String digestToString(final View expected, final byte[] buffer) {
+        assert expected != null && buffer != null;
+        StringBuilder sb=new StringBuilder();
+        ExposedByteArrayInputStream input=new ExposedByteArrayInputStream(buffer);
+        DataInput in=new DataInputStream(input);
+        ViewId view_id=new ViewId();
+        List<Address> members=expected.getMembers();
+        try {
+            view_id.readFrom(in);
+            if(!view_id.equals(expected.getViewId()))
+                sb.append("view IDs don't match: received=" + view_id + ", expected=" + expected.getViewId());
+            else {
+                int length=expected.size();
+                if(length == 0) return "[]";
+                boolean first=true;
+                int     count=0;
+
+                for(int i=0; i < length; i++) {
+                    Address member=members.get(i);
+                    long[] seqno=Util.readLongSequence(in);
+                    if(!first)
+                        sb.append(", ");
+                    else
+                        first=false;
+                    sb.append(member).append(": ").append('[').append(seqno[0]);
+                    if(seqno[1] >= 0)
+                        sb.append(" (").append(seqno[1]).append(")");
+                    sb.append("]");
+                    if(Util.MAX_LIST_PRINT_SIZE > 0 && ++count >= Util.MAX_LIST_PRINT_SIZE) {
+                        if(length > count)
+                            sb.append(", ...");
+                        break;
+                    }
+                }
+            }
+        }
+        catch(Exception e) {
+            sb.append(e);
+        }
+        return sb.toString();
+    }
+
+    /** Returns true if the members in the digest and the view match */
+    public static boolean digestMatchesView(final Digest digest, final View view) {
+        if(view.size() != digest.size())
+            return false;
+        for(Digest.DigestEntry entry: digest) {
+            Address digest_member=entry.getMember();
+            if(!view.containsMember(digest_member))
+                return false;
+        }
+        return true;
     }
 
 

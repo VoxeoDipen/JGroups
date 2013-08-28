@@ -612,7 +612,7 @@ public class DigestTest {
 
         assert digest.equals(digest1);
         assert digest.equals(digest2);
-
+        assert Util.digestMatchesView(digest2, view);
         System.out.println("digest1 = " + digest1);
         System.out.println("digest2 = " + digest2);
     }

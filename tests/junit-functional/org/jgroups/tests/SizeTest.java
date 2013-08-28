@@ -305,10 +305,12 @@ public class SizeTest {
     public static void testStableHeader() throws Exception {
         org.jgroups.protocols.pbcast.STABLE.StableHeader hdr;
         Address addr=UUID.randomUUID();
+        View view=Util.createView(addr, 1, addr);
         Map<Address,long[]> map=new HashMap<Address,long[]>();
         map.put(addr, new long[]{200, 205});
         Digest digest=new Digest(map);
-        hdr=new STABLE.StableHeader(STABLE.StableHeader.STABLE_GOSSIP, digest);
+        Buffer buffer=Util.digestToBuffer(view, digest);
+        hdr=new STABLE.StableHeader(STABLE.StableHeader.STABLE_GOSSIP, buffer);
         _testSize(hdr);
 
         hdr=new STABLE.StableHeader(STABLE.StableHeader.STABILITY, null);
@@ -321,7 +323,9 @@ public class SizeTest {
         IpAddress addr=new IpAddress("127.0.0.1", 5555);
         MutableDigest digest=new MutableDigest(2);
         digest.add(addr, 200, 205);
-        hdr=new STABLE.StableHeader(STABLE.StableHeader.STABLE_GOSSIP, digest);
+        View view=Util.createView(addr, 1, addr);
+        Buffer buffer=Util.digestToBuffer(view, digest);
+        hdr=new STABLE.StableHeader(STABLE.StableHeader.STABLE_GOSSIP, buffer);
         _testSize(hdr);
 
         hdr=new STABLE.StableHeader(STABLE.StableHeader.STABILITY, null);
