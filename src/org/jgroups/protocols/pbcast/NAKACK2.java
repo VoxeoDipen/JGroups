@@ -487,20 +487,19 @@ public class NAKACK2 extends Protocol implements DiagnosticsHandler.ProbeHandler
 
             case Event.TMP_VIEW:
                 View tmp_view=(View)evt.getArg();
-                List<Address> mbrs=tmp_view.getMembers();
-                members=new ArrayList<Address>(mbrs);
+                members=tmp_view.getMembers();
                 break;
 
             case Event.VIEW_CHANGE:
                 tmp_view=(View)evt.getArg();
-                mbrs=tmp_view.getMembers();
-                members=new ArrayList<Address>(mbrs);
+                List<Address> mbrs=tmp_view.getMembers();
+                members=mbrs;
                 view=tmp_view;
                 adjustReceivers(mbrs);
                 is_server=true;  // check vids from now on
                 if(suppress_log_non_member != null)
                     suppress_log_non_member.removeExpired(suppress_time_non_member_warnings);
-                xmit_task_map.keySet().retainAll(tmp_view.getMembers());
+                xmit_task_map.keySet().retainAll(mbrs);
                 break;
 
             case Event.BECOME_SERVER:

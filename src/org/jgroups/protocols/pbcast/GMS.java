@@ -163,10 +163,7 @@ public class GMS extends Protocol implements DiagnosticsHandler.ProbeHandler {
 
     /** Returns the current view and digest */
     public Tuple<View,Digest> getViewAndDigest() {
-        View tmp_view=view != null? view.copy() : null;
-        Digest digest=getDigest();
-        if(digest != null) digest.view(tmp_view);
-        return tmp_view != null? new Tuple<View,Digest>(tmp_view, digest) : null;
+        return new Tuple<View,Digest>(view, getDigest());
     }
 
     @ManagedAttribute

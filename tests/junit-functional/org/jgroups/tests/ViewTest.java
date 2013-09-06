@@ -7,6 +7,7 @@ import org.jgroups.Global;
 import org.jgroups.View;
 import org.jgroups.ViewId;
 import org.jgroups.util.Util;
+import org.testng.Assert;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
@@ -39,6 +40,12 @@ public class ViewTest {
         view=View.create(a, 34, a, b, c, d, e, f, g, h);
 
     }
+
+    @Test(expectedExceptions=IllegalArgumentException.class)
+    public void testConstructor() {
+        view=new View(a, 1, null);
+    }
+
 
     public void testGetMembers() throws Exception {
         List<Address> mbrs=view.getMembers();
@@ -93,7 +100,7 @@ public class ViewTest {
  
 
     public void testCopy() throws Exception {
-        View view2=view.copy();
+        View view2=view;
         System.out.println("view = " + view);
         System.out.println("view2 = " + view2);
         assert view.equals(view2);
@@ -155,10 +162,21 @@ public class ViewTest {
         assert left[0].equals(a) && left[1].equals(e) && left[2].equals(f);
     }
 
+
+    public void testIterator() {
+        List<Address> mbrs=new ArrayList<Address>(members.size());
+        for(Address addr: view)
+            mbrs.add(addr);
+
+        System.out.println("mbrs: " + mbrs);
+        Assert.assertEquals(members, mbrs);
+    }
+
     protected static String printDiff(Address[][] diff) {
         StringBuilder sb=new StringBuilder();
         Address[] joined=diff[0], left=diff[1];
         sb.append("joined: ").append(Arrays.toString(joined)).append(", left: ").append(Arrays.toString(left));
         return sb.toString();
     }
+
 }

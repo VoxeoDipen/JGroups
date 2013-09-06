@@ -2,6 +2,7 @@
 package org.jgroups;
 
 
+import org.jgroups.annotations.Immutable;
 import org.jgroups.util.Streamable;
 import org.jgroups.util.Util;
 
@@ -18,6 +19,7 @@ import java.util.*;
  * @since 2.0
  * @author Bela Ban
  */
+@Immutable
 public class View implements Comparable<View>, Streamable, Iterable<Address> {
 
    /**
@@ -25,14 +27,14 @@ public class View implements Comparable<View>, Streamable, Iterable<Address> {
     * Lamport time. The Lamport time is the highest timestamp seen or sent from a view. if a view
     * change comes in with a lower Lamport time, the event is discarded.
     */
-    protected ViewId vid;
+    protected ViewId    view_id;
 
    /**
-    * A list containing all the members of the view.This list is always ordered, with the
-    * coordinator being the first member. the second member will be the new coordinator if the
+    * An array containing all the members of the view. This array is always ordered, with the
+    * coordinator being the first member. The second member will be the new coordinator if the
     * current one disappears or leaves the group.
     */
-    protected List<Address> members;
+    protected Address[] members;
 
 
 
@@ -46,12 +48,29 @@ public class View implements Comparable<View>, Streamable, Iterable<Address> {
     /**
      * Creates a new view
      *
-     * @param vid     The view id of this view (can not be null)
+     * @param view_id The view id of this view (can not be null)
      * @param members Contains a list of all the members in the view, can be empty but not null.
      */
-    public View(ViewId vid, List<Address> members) {
-        this.vid=vid;
-        this.members=Collections.unmodifiableList(members);
+    public View(ViewId view_id, List<Address> members) {
+        this.view_id=view_id;
+        if(members == null)
+            throw new IllegalArgumentException("members cannot be null");
+        this.members=new Address[members.size()];
+        int index=0;
+        for(Address member: members)
+            this.members[index++]=member;
+    }
+
+    /**
+     * Creates a new view.
+     * @param view_id The new view-id
+     * @param members The members. Note that the parameter is <em>not</em> copied.
+     */
+    public View(ViewId view_id, Address[] members) {
+        this.view_id=view_id;
+        this.members=members;
+        if(members == null)
+            throw new IllegalArgumentException("members cannot be null");
     }
 
     /**
@@ -66,50 +85,59 @@ public class View implements Comparable<View>, Streamable, Iterable<Address> {
     }
 
     public static View create(Address coord, long id, Address ... members) {
-        return new View(coord, id, Arrays.asList(members));
+        return new View(new ViewId(coord, id), members);
     }
+
+    @Deprecated public ViewId getVid()    {return view_id;}
 
     /**
      * Returns the view ID of this view
      * if this view was created with the empty constructur, null will be returned
-     *
      * @return the view ID of this view
      */
-    public ViewId getVid()    {return vid;}
-    public ViewId getViewId() {return vid;}
+    public ViewId getViewId() {return view_id;}
 
     /**
      * Returns the creator of this view
      * if this view was created with the empty constructur, null will be returned
-     *
      * @return the creator of this view in form of an Address object
      */
     public Address getCreator() {
-        return vid.getCreator();
+        return view_id.getCreator();
     }
 
     /**
      * Returns the member list
-     * @return an unmodifiable list of members
+     * @return an unmodifiable list
      */
     public List<Address> getMembers() {
+        return Collections.unmodifiableList(Arrays.asList(members));
+    }
+
+    /** Returns the underlying array. The caller <em>must not</em> modify the contents. Should not be used by
+     *  application code ! This method may be removed at any time, so don't use it !
+     */
+    public Address[] getMembersRaw() {
         return members;
     }
 
     /**
-     * Returns true, if this view contains a certain member
-     *
+     * Returns true if this view contains a certain member
      * @param mbr - the address of the member,
      * @return true if this view contains the member, false if it doesn't
-     *         if the argument mbr is null, this operation returns false
      */
     public boolean containsMember(Address mbr) {
-        return mbr != null && members.contains(mbr);
+        if(mbr == null || members == null)
+            return false;
+        for(Address member: members)
+            if(member != null && member.equals(mbr))
+                return true;
+        return false;
     }
 
 
     public int compareTo(View o) {
-        return vid.compareTo(o.vid);
+        return view_id.compareTo(o.view_id);
     }
 
     public boolean equals(Object obj) {
@@ -118,28 +146,30 @@ public class View implements Comparable<View>, Streamable, Iterable<Address> {
 
 
     public int hashCode() {
-        return vid.hashCode();
+        return view_id.hashCode();
     }
 
     /**
      * Returns the number of members in this view
-     *
      * @return the number of members in this view 0..n
      */
     public int size() {
-        return members.size();
+        return members.length;
     }
 
-
-    public View copy() {
-        // to avoid cascading refs (UnmodifiableList keeps a ref to the wrapped list)
-        return new View(vid.copy(), new ArrayList<Address>(members));
+    /**
+     * Creates a copy of a view
+     * @return
+     * @deprecated View is immutable, so copy() is unnecessary
+     */
+    @Deprecated public View copy() {
+        return this;
     }
 
 
     public String toString() {
         StringBuilder sb=new StringBuilder(64);
-        sb.append(vid).append(" ");
+        sb.append(view_id).append(" ");
         if(members != null)
             sb.append("[").append(Util.printListWithDelimiter(members, ", ", Util.MAX_LIST_PRINT_SIZE)).append("]");
         return sb.toString();
@@ -147,19 +177,19 @@ public class View implements Comparable<View>, Streamable, Iterable<Address> {
 
 
     public void writeTo(DataOutput out) throws Exception {
-        vid.writeTo(out);
-        Util.writeAddresses(members, out);
+        view_id.writeTo(out);
+        Util.writeAddresses(members,out);
     }
 
     @SuppressWarnings("unchecked") 
     public void readFrom(DataInput in) throws Exception {
-        vid=new ViewId();
-        vid.readFrom(in);
-        members=Collections.unmodifiableList((List<? extends Address>)Util.readAddresses(in, ArrayList.class));
+        view_id=new ViewId();
+        view_id.readFrom(in);
+        members=Util.readAddresses(in);
     }
 
     public int serializedSize() {
-        return (int)(vid.serializedSize() + Util.size(members));
+        return (int)(view_id.serializedSize() + Util.size(members));
     }
 
     /**
@@ -224,6 +254,30 @@ public class View implements Comparable<View>, Streamable, Iterable<Address> {
     }
 
     public Iterator<Address> iterator() {
-        return members.iterator();
+        return new MembersIterator(this.members);
+    }
+
+
+    protected static class MembersIterator implements Iterator<Address> {
+        protected int             index=0;
+        protected final Address[] mbrs;
+
+        public MembersIterator(Address[] mbrs) {
+            this.mbrs=mbrs;
+        }
+
+        public boolean hasNext() {
+            return index < mbrs.length;
+        }
+
+        public Address next() {
+            if(index >= mbrs.length)
+                throw new NoSuchElementException("index=" + index + ", length=" + mbrs.length);
+            return mbrs[index++];
+        }
+
+        public void remove() {
+            throw new UnsupportedOperationException();
+        }
     }
 }

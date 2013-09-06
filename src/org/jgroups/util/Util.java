@@ -342,16 +342,16 @@ public class Util {
       return baos.toByteArray();
    }
    
-   public static byte[] createDigest(String passcode, long t1, double q1)
-            throws IOException, NoSuchAlgorithmException {
-      MessageDigest md = MessageDigest.getInstance("SHA");
-      md.update(passcode.getBytes());
-      ByteBuffer bb = ByteBuffer.allocate(16); //8 bytes for long and double each
-      bb.putLong(t1);
-      bb.putDouble(q1);
-      md.update(bb);
-      return md.digest();      
-   }
+    public static byte[] createDigest(String passcode, long t1, double q1)
+      throws IOException, NoSuchAlgorithmException {
+        MessageDigest md = MessageDigest.getInstance("SHA");
+        md.update(passcode.getBytes());
+        ByteBuffer bb = ByteBuffer.allocate(16); //8 bytes for long and double each
+        bb.putLong(t1);
+        bb.putDouble(q1);
+        md.update(bb);
+        return md.digest();
+    }
 
     /**
      * Utility method. If the dest address is IPv6, convert scoped link-local addrs into unscoped ones
@@ -916,16 +916,24 @@ public class Util {
 
     public static int size(Address addr) {
         int retval=Global.BYTE_SIZE; // flags
-        if(addr != null) {
-            if(addr instanceof UUID || addr instanceof IpAddress)
-                retval+=addr.size();
-            else {
-                retval+=Global.SHORT_SIZE; // magic number
-                retval+=addr.size();
-            }
+        if(addr == null)
+            return retval;
+
+        if(addr instanceof UUID) {
+            Class<? extends Address> clazz=addr.getClass();
+            if(clazz.equals(UUID.class) || clazz.equals(SiteUUID.class) || clazz.equals(SiteMaster.class))
+                return retval+addr.size();
         }
+        if(addr instanceof IpAddress)
+            return retval+addr.size();
+
+        retval+=Global.SHORT_SIZE; // magic number
+        retval+=addr.size();
         return retval;
     }
+
+
+
 
     public static int size(View view) {
         int retval=Global.BYTE_SIZE; // presence
@@ -977,7 +985,7 @@ public class Util {
     }
 
     /**
-     * Writes a Vector of Addresses. Can contain 65K addresses at most
+     * Writes a list of Addresses. Can contain 65K addresses at most
      *
      * @param v A Collection<Address>
      * @param out
@@ -992,6 +1000,16 @@ public class Util {
         for(Address addr: v) {
             Util.writeAddress(addr, out);
         }
+    }
+
+    public static void writeAddresses(final Address[] addrs, DataOutput out) throws Exception {
+        if(addrs == null) {
+            out.writeShort(-1);
+            return;
+        }
+        out.writeShort(addrs.length);
+        for(Address addr: addrs)
+            Util.writeAddress(addr, out);
     }
 
     /**
@@ -1015,6 +1033,18 @@ public class Util {
     }
 
 
+    public static Address[] readAddresses(DataInput in) throws Exception {
+        short length=in.readShort();
+        if(length < 0) return null;
+        Address[] retval=new Address[length];
+        for(int i=0; i < length; i++) {
+            Address addr=Util.readAddress(in);
+            retval[i]=addr;
+        }
+        return retval;
+    }
+
+
     /**
      * Returns the marshalled size of a Collection of Addresses.
      * <em>Assumes elements are of the same type !</em>
@@ -1030,7 +1060,13 @@ public class Util {
         return retval;
     }
 
-
+    public static long size(Address[] addrs) {
+        int retval=Global.SHORT_SIZE; // number of elements
+        if(addrs != null)
+            for(Address addr: addrs)
+                retval+=Util.size(addr);
+        return retval;
+    }
 
 
     public static void writeStreamable(Streamable obj, DataOutput out) throws Exception {
@@ -2191,6 +2227,27 @@ public class Util {
         boolean first=true;
         StringBuilder sb=new StringBuilder();
         int count=0, size=list.size();
+        for(T el: list) {
+            if(first) {
+                first=false;
+            }
+            else {
+                sb.append(delimiter);
+            }
+            sb.append(el);
+            if(limit > 0 && ++count >= limit) {
+                if(size > count)
+                    sb.append(" ...");
+                break;
+            }
+        }
+        return sb.toString();
+    }
+
+    public static <T> String printListWithDelimiter(T[] list, String delimiter, int limit) {
+        boolean first=true;
+        StringBuilder sb=new StringBuilder();
+        int count=0, size=list.length;
         for(T el: list) {
             if(first) {
                 first=false;

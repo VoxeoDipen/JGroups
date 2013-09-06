@@ -693,13 +693,13 @@ public class Merger {
             for(MergeData tmp_data: merge_rsps) {
                 View tmp_view=tmp_data.getView();
                 if(tmp_view != null) {
-                    ViewId tmp_vid=tmp_view.getVid();
+                    ViewId tmp_vid=tmp_view.getViewId();
                     if(tmp_vid != null)
                         logical_time=Math.max(logical_time, tmp_vid.getId()); // compute the new view id (max of all vids +1)
 
                     // merge all membership lists into one (prevent duplicates)
                     sub_mbrships.add(new ArrayList<Address>(tmp_view.getMembers()));
-                    subgroups.add(tmp_view.copy());
+                    subgroups.add(tmp_view);
                 }
             }
 

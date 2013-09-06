@@ -385,6 +385,15 @@ public class SizeTest {
         mbrs.add(Util.createRandomAddress("C"));
         v=new View(vid, mbrs);
         _testSize(v);
+
+        // tests a view with different address types
+        mbrs.add(AdditionalDataUUID.randomUUID("additional", new byte[]{'b', 'e', 'l', 'a'}));
+        v=new View(vid, mbrs);
+        _testSize(v);
+
+        mbrs.add(TopologyUUID.randomUUID("LON", "rack-223", "linux"));
+        v=new View(vid, mbrs);
+        _testSize(v);
     }
 
 
@@ -394,8 +403,11 @@ public class SizeTest {
         View v=new MergeView(vid, mbrs, null);
         _testSize(v);
         mbrs.add(UUID.randomUUID());
+        v=new MergeView(vid, mbrs, null);
         _testSize(v);
+
         mbrs.add(UUID.randomUUID());
+        v=new MergeView(vid, mbrs, null);
         _testSize(v);
     }
 
@@ -718,6 +730,25 @@ public class SizeTest {
         _testSize(uuid);
 
         uuid=org.jgroups.util.UUID.randomUUID();
+        byte[] buf=Util.streamableToByteBuffer(uuid);
+        org.jgroups.util.UUID uuid2=(org.jgroups.util.UUID)Util.streamableFromByteBuffer(org.jgroups.util.UUID.class, buf);
+        System.out.println("uuid:  " + uuid);
+        System.out.println("uuid2: " + uuid2);
+        assert uuid.equals(uuid2);
+
+        int hash1=uuid.hashCode(), hash2=uuid2.hashCode();
+        System.out.println("hash 1: " + hash1);
+        System.out.println("hash 2: " + hash2);
+        assert hash1 == hash2;
+    }
+
+
+    public static void testAdditionalDataUUID() throws Exception {
+        Address uuid=AdditionalDataUUID.randomUUID("A", new byte[]{'b', 'e', 'l', 'a'});
+        System.out.println("uuid = " + uuid);
+        _testSize(uuid);
+
+        uuid=AdditionalDataUUID.randomUUID("A", new byte[]{'b', 'e', 'l', 'a'});
         byte[] buf=Util.streamableToByteBuffer(uuid);
         org.jgroups.util.UUID uuid2=(org.jgroups.util.UUID)Util.streamableFromByteBuffer(org.jgroups.util.UUID.class, buf);
         System.out.println("uuid:  " + uuid);

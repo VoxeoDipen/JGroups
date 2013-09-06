@@ -717,9 +717,7 @@ public class RELAY extends Protocol {
 
         public static ViewData create(View remote_view, View global_view) {
             Map<Address,String> tmp=UUID.getContents();
-            View rv=remote_view != null? remote_view.copy() : null;
-            View gv=global_view != null? global_view.copy() : null;
-            return new ViewData(rv, gv, tmp);
+            return new ViewData(remote_view, global_view, tmp);
         }
 
 
