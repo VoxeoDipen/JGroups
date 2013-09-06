@@ -65,6 +65,9 @@ public class View implements Comparable<View>, Streamable, Iterable<Address> {
         this(new ViewId(creator, id), members);
     }
 
+    public static View create(Address coord, long id, Address ... members) {
+        return new View(coord, id, Arrays.asList(members));
+    }
 
     /**
      * Returns the view ID of this view
@@ -134,7 +137,6 @@ public class View implements Comparable<View>, Streamable, Iterable<Address> {
     }
 
 
-
     public String toString() {
         StringBuilder sb=new StringBuilder(64);
         sb.append(vid).append(" ");
@@ -142,7 +144,6 @@ public class View implements Comparable<View>, Streamable, Iterable<Address> {
             sb.append("[").append(Util.printListWithDelimiter(members, ", ", Util.MAX_LIST_PRINT_SIZE)).append("]");
         return sb.toString();
     }
-
 
 
     public void writeTo(DataOutput out) throws Exception {
@@ -161,6 +162,66 @@ public class View implements Comparable<View>, Streamable, Iterable<Address> {
         return (int)(vid.serializedSize() + Util.size(members));
     }
 
+    /**
+     * Returns a list of members which left from view one to two
+     * @param one
+     * @param two
+     * @return
+     */
+    public static List<Address> leftMembers(View one, View two) {
+        if(one == null || two == null)
+            return null;
+        List<Address> retval=new ArrayList<Address>(one.getMembers());
+        retval.removeAll(two.getMembers());
+        return retval;
+    }
+
+    /**
+     * Returns the difference between 2 views from and to. It is assumed that view 'from' is logically prior to view 'to'.
+     * @param from The first view
+     * @param to The second view
+     * @return an array of 2 Address arrays: index 0 has the addresses of the joined member, index 1 those of the left members
+     */
+    public static Address[][] diff(final View from, final View to) {
+        if(to == null)
+            throw new IllegalArgumentException("the second view cannot be null");
+        if(from == null) {
+            Address[] joined=new Address[to.size()];
+            int index=0;
+            for(Address addr: to.getMembers())
+                joined[index++]=addr;
+            return new Address[][]{joined,{}};
+        }
+
+        Address[] joined=null, left=null;
+        int num_joiners=0, num_left=0;
+
+        // determin joiners
+        for(Address addr: to)
+            if(!from.containsMember(addr))
+                num_joiners++;
+        if(num_joiners > 0) {
+            joined=new Address[num_joiners];
+            int index=0;
+            for(Address addr: to)
+                if(!from.containsMember(addr))
+                    joined[index++]=addr;
+        }
+
+        // determin leavers
+        for(Address addr: from)
+            if(!to.containsMember(addr))
+                num_left++;
+        if(num_left > 0) {
+            left=new Address[num_left];
+            int index=0;
+            for(Address addr: from)
+                if(!to.containsMember(addr))
+                    left[index++]=addr;
+        }
+
+        return new Address[][]{joined != null? joined : new Address[]{}, left != null? left : new Address[]{}};
+    }
 
     public Iterator<Address> iterator() {
         return members.iterator();

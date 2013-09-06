@@ -233,7 +233,7 @@ public class MergeTest3 {
         Collections.sort(members);
         Address coord=members.get(0);
         View view=new View(coord, 2, members);
-        MutableDigest digest=new MutableDigest(3);
+        MutableDigest digest=new MutableDigest(view);
         for(JChannel ch: channels) {
             NAKACK2 nakack=(NAKACK2)ch.getProtocolStack().findProtocol(NAKACK2.class);
             digest.merge(nakack.getDigest(ch.getAddress()));

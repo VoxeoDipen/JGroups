@@ -352,8 +352,8 @@ public class GMS_MergeTest {
 //             c.getProtocolStack().findProtocol(STABLE.class).setLevel("trace");
 
              for(int i=0; i < 3; i++) {
-                 ((STABLE)b.getProtocolStack().findProtocol(STABLE.class)).runMessageGarbageCollection();
-                 ((STABLE)c.getProtocolStack().findProtocol(STABLE.class)).runMessageGarbageCollection();
+                 ((STABLE)b.getProtocolStack().findProtocol(STABLE.class)).gc();
+                 ((STABLE)c.getProtocolStack().findProtocol(STABLE.class)).gc();
                  Util.sleep(300);
              }
 

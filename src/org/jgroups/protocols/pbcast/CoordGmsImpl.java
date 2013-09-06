@@ -157,34 +157,27 @@ public class CoordGmsImpl extends ServerGmsImpl {
                 if(log.isWarnEnabled())
                     log.warn(mbr + " already present; returning existing view " + gms.view);
                 Tuple<View,Digest> tuple=gms.getViewAndDigest();
-                if(tuple != null) {
-                    JoinRsp join_rsp=new JoinRsp(tuple.getVal1(), tuple.getVal2());
-                    gms.sendJoinResponse(join_rsp, mbr);
-                }
+                if(tuple != null)
+                    gms.sendJoinResponse(new JoinRsp(tuple.getVal1(), tuple.getVal2()), mbr);
                 it.remove();
             }
         }
 
         if(new_mbrs.isEmpty() && leaving_mbrs.isEmpty() && suspected_mbrs.isEmpty()) {
-            if(log.isTraceEnabled())
-                log.trace("found no members to add or remove, will not create new view");
+            log.trace("%s: found no members to add or remove, will not create new view", gms.local_addr);
             return;
         }
         
         View new_view=gms.getNextView(new_mbrs, leaving_mbrs, suspected_mbrs);
 
         if(new_view.size() == 0 && gms.local_addr != null && gms.local_addr.equals(new_view.getCreator())) {
-            if(log.isTraceEnabled())
-                log.trace("view " + new_view + " is empty: will not multicast it (last view)");
-            if(leaving) {
+            if(leaving)
                 gms.initState(); // in case connect() is called again
-            }
             return;
         }
 
-        if(log.isTraceEnabled())
-            log.trace(gms.local_addr + ": new members=" + new_mbrs + ", suspected=" + suspected_mbrs + ", leaving=" + leaving_mbrs +
-                        ", new view: " + new_view);
+        log.trace("%s: joiners=%s, suspected=%s, leaving=%s, new view: %s",
+                  gms.local_addr, new_mbrs, suspected_mbrs, leaving_mbrs, new_view);
              
         JoinRsp join_rsp=null;
         boolean hasJoiningMembers=!new_mbrs.isEmpty();
@@ -206,34 +199,29 @@ public class CoordGmsImpl extends ServerGmsImpl {
                 gms.getDownProtocol().down(new Event(Event.SUSPEND_STABLE, MAX_SUSPEND_TIMEOUT));
                 Digest tmp=gms.getDigest(); // get existing digest
                 MutableDigest join_digest=null;
-                if(tmp == null){
+                if(tmp == null)
                     log.error("received null digest from GET_DIGEST: will cause JOIN to fail");
-                }
                 else {
                     // create a new digest, which contains the new members, minus left members
-                    join_digest=new MutableDigest(tmp.size() + new_mbrs.size());
-                    for(Digest.DigestEntry entry: tmp) {
-                        Address mbr=entry.getMember();
-                        if(new_view.containsMember(mbr))
-                            join_digest.add(mbr, entry.getHighestDeliveredSeqno(), entry.getHighestReceivedSeqno(), false);
-                    }
+                    join_digest=new MutableDigest(new_view).set(tmp);
                     for(Address member: new_mbrs)
-                        join_digest.add(member, 0, 0); // ... and add the new members. their first seqno will be 1
+                        join_digest.set(member,0,0); // ... and set the new members. their first seqno will be 1
                 }
-                join_rsp=new JoinRsp(new_view, join_digest != null? join_digest.copy() : null);
+                join_rsp=new JoinRsp(new_view, join_digest);
             }
 
-            sendLeaveResponses(leaving_mbrs); // no-op if no leaving members                            
-            gms.castViewChange(new_view,join_rsp != null? join_rsp.getDigest() : null,join_rsp,new_mbrs);
+            sendLeaveResponses(leaving_mbrs); // no-op if no leaving members
+
+            // we don't need to send the digest to existing members: https://issues.jboss.org/browse/JGRP-1317
+            gms.castViewChange(new_view, null, join_rsp, new_mbrs);
         }
         finally {
             if(hasJoiningMembers)
                 gms.getDownProtocol().down(new Event(Event.RESUME_STABLE));
             if(!joinAndStateTransferInitiated && useFlushIfPresent)
                 gms.stopFlush();
-            if(leaving) {
+            if(leaving)
                 gms.initState(); // in case connect() is called again
-            }
         }
     }
 
@@ -245,8 +233,7 @@ public class CoordGmsImpl extends ServerGmsImpl {
      *                 be set by GMS
      */
     public void handleViewChange(View new_view, Digest digest) {
-        List<Address> mbrs=new_view.getMembers();
-        if(leaving && !mbrs.contains(gms.local_addr))
+        if(leaving && !new_view.containsMember(gms.local_addr))
             return;
         gms.installView(new_view, digest);
     }

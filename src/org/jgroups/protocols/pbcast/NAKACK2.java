@@ -164,7 +164,7 @@ public class NAKACK2 extends Protocol implements DiagnosticsHandler.ProbeHandler
     protected volatile boolean          is_server=false;
     protected Address                   local_addr=null;
     protected volatile List<Address>    members=new ArrayList<Address>();
-    protected View                      view;
+    protected volatile View             view;
     private final AtomicLong            seqno=new AtomicLong(0); // current message sequence number (starts with 1)
 
     /** Map to store sent and received messages (keyed by sender) */
@@ -368,7 +368,7 @@ public class NAKACK2 extends Protocol implements DiagnosticsHandler.ProbeHandler
         if(xmit_from_random_member) {
             if(discard_delivered_msgs) {
                 discard_delivered_msgs=false;
-                log.debug("xmit_from_random_member set to true: changed discard_delivered_msgs to false");
+                log.debug("%s: xmit_from_random_member set to true: changed discard_delivered_msgs to false", local_addr);
             }
         }
 
@@ -845,7 +845,7 @@ public class NAKACK2 extends Protocol implements DiagnosticsHandler.ProbeHandler
             }
         }
 
-        removeAndPassUp(buf, sender, loopback, cluster_name); // at most 1 thread will execute this at any given time
+        removeAndPassUp(buf,sender,loopback,cluster_name); // at most 1 thread will execute this at any given time
     }
 
 
@@ -1100,7 +1100,7 @@ public class NAKACK2 extends Protocol implements DiagnosticsHandler.ProbeHandler
             Digest my_digest=getDigest();
             boolean xmitted=false;
 
-            for(Digest.DigestEntry entry: their_digest) {
+            for(Digest.Entry entry: their_digest) {
                 Address member=entry.getMember();
                 long[] my_entry=my_digest.get(member);
                 if(my_entry == null)
@@ -1128,7 +1128,7 @@ public class NAKACK2 extends Protocol implements DiagnosticsHandler.ProbeHandler
                     my_digest=getDigest();
                     rebroadcast_digest_lock.lock();
                     try {
-                        if(!rebroadcasting || my_digest.isGreaterThanOrEqual(rebroadcast_digest))
+                        if(!rebroadcasting || isGreaterThanOrEqual(my_digest, rebroadcast_digest))
                             return;
                     }
                     finally {
@@ -1151,7 +1151,7 @@ public class NAKACK2 extends Protocol implements DiagnosticsHandler.ProbeHandler
         boolean cancel_rebroadcasting;
         rebroadcast_digest_lock.lock();
         try {
-            cancel_rebroadcasting=tmp.isGreaterThanOrEqual(rebroadcast_digest);
+            cancel_rebroadcasting=isGreaterThanOrEqual(tmp, rebroadcast_digest);
         }
         finally {
             rebroadcast_digest_lock.unlock();
@@ -1161,23 +1161,48 @@ public class NAKACK2 extends Protocol implements DiagnosticsHandler.ProbeHandler
         }
     }
 
+    /**
+     * Returns true if all senders of the current digest have their seqnos >= the ones from other
+     */
+    protected static boolean isGreaterThanOrEqual(Digest first, Digest other) {
+        if(other == null)
+            return true;
+
+        for(Digest.Entry entry: first) {
+            Address sender=entry.getMember();
+            long[] their_entry=other.get(sender);
+            if(their_entry == null)
+                continue;
+            long my_highest=entry.getHighest();
+            long their_highest=Math.max(their_entry[0],their_entry[1]);
+            if(my_highest < their_highest)
+                return false;
+        }
+        return true;
+    }
+
 
     /**
-     * Remove old members from the retransmission buffers. Essentially removes all members that are not
-     * in <code>members</code>. This method is not called concurrently multiple times
+     * Removes old members from xmit-table and adds new members to xmit-table (at seqnos hd=0, hr=0).
+     * This method is not called concurrently
      */
-    protected void adjustReceivers(List<Address> new_members) {
-        for(Address member: xmit_table.keySet()) {
-            if(!new_members.contains(member)) {
+    protected void adjustReceivers(List<Address> members) {
+        Set<Address> keys=xmit_table.keySet();
+
+        // remove members which left
+        for(Address member: keys) {
+            if(!members.contains(member)) {
                 if(local_addr != null && local_addr.equals(member))
                     continue;
                 Table<Message> buf=xmit_table.remove(member);
-                if(buf != null) {
-                    if(log.isDebugEnabled())
-                        log.debug(local_addr + ": removed " + member + " from xmit_table (not member anymore)");
-                }
+                if(buf != null)
+                    log.debug("%s: removed %s from xmit_table (not member anymore)", local_addr, member);
             }
         }
+
+        for(Address member: members)
+            if(!keys.contains(member))
+                xmit_table.putIfAbsent(member, createTable(0));
     }
 
 
@@ -1185,14 +1210,7 @@ public class NAKACK2 extends Protocol implements DiagnosticsHandler.ProbeHandler
      * Returns a message digest: for each member P the highest delivered and received seqno is added
      */
     public Digest getDigest() {
-        final Map<Address,long[]> map=new HashMap<Address,long[]>();
-        for(Map.Entry<Address,Table<Message>> entry: xmit_table.entrySet()) {
-            Address sender=entry.getKey(); // guaranteed to be non-null (CCHM)
-            Table<Message> buf=entry.getValue(); // guaranteed to be non-null (CCHM)
-            long[] seqnos=buf.getDigest();
-            map.put(sender, seqnos);
-        }
-        return new Digest(map);
+        return getDigest(view);
     }
 
 
@@ -1203,9 +1221,29 @@ public class NAKACK2 extends Protocol implements DiagnosticsHandler.ProbeHandler
         if(buf == null)
             return null;
         long[] seqnos=buf.getDigest();
-        return new Digest(mbr, seqnos[0], seqnos[1]);
+        return new MutableDigest(view).set(mbr, seqnos[0], seqnos[1]);
     }
 
+
+    protected Digest getDigest(final View current_view) {
+        if(current_view == null)
+            return null;
+        long[] seqnos=new long[current_view.size() *2];
+        int index=0;
+
+        for(Address member: current_view) {
+            Table<Message> table=xmit_table.get(member);
+            if(table == null)
+                log.warn("%s: entry for member %s not found", local_addr, member);
+
+            long[] tmp=table != null? table.getDigest() : new long[]{0,0};
+            seqnos[index]=tmp[0];
+            index++;
+            seqnos[index]=tmp[1];
+            index++;
+        }
+        return new Digest(current_view, seqnos);
+    }
 
     /**
      * Creates a retransmit buffer for each sender in the digest according to the sender's seqno.
@@ -1237,7 +1275,7 @@ public class NAKACK2 extends Protocol implements DiagnosticsHandler.ProbeHandler
         StringBuilder sb=new StringBuilder("\n[overwriteDigest()]\n");
         sb.append("existing digest:  " + getDigest()).append("\nnew digest:       " + digest);
 
-        for(Digest.DigestEntry entry: digest) {
+        for(Digest.Entry entry: digest) {
             Address member=entry.getMember();
             if(member == null)
                 continue;
@@ -1256,7 +1294,7 @@ public class NAKACK2 extends Protocol implements DiagnosticsHandler.ProbeHandler
             buf=createTable(highest_delivered_seqno);
             xmit_table.put(member, buf);
         }
-        sb.append("\n").append("resulting digest: " + getDigest());
+        sb.append("\n").append("resulting digest: " + getDigest(digest.view() != null? digest.view() : this.view));
         digest_history.add(sb.toString());
         if(log.isDebugEnabled())
             log.debug(sb.toString());
@@ -1274,11 +1312,12 @@ public class NAKACK2 extends Protocol implements DiagnosticsHandler.ProbeHandler
         if(digest == null)
             return;
 
-        StringBuilder sb=new StringBuilder(merge? "\n[" + local_addr + " mergeDigest()]\n" : "\n["+local_addr + " setDigest()]\n");
-        sb.append("existing digest:  " + getDigest()).append("\nnew digest:       " + digest);
+        StringBuilder sb=log.isDebugEnabled()?
+          new StringBuilder(merge? "\n[" + local_addr + " mergeDigest()]\n" : "\n["+local_addr + " setDigest()]\n")
+            .append("existing digest:  " + getDigest()).append("\nnew digest:       " + digest) : null;
         
         boolean set_own_seqno=false;
-        for(Digest.DigestEntry entry: digest) {
+        for(Digest.Entry entry: digest) {
             Address member=entry.getMember();
             if(member == null)
                 continue;
@@ -1304,10 +1343,12 @@ public class NAKACK2 extends Protocol implements DiagnosticsHandler.ProbeHandler
             buf=createTable(highest_delivered_seqno);
             xmit_table.put(member, buf);
         }
-        sb.append("\n").append("resulting digest: " + getDigest());
-        if(set_own_seqno)
+        if(sb != null)
+            sb.append("\n").append("resulting digest: " + getDigest(digest.view()));
+        if(set_own_seqno && sb != null)
             sb.append("\nnew seqno for " + local_addr + ": " + seqno);
-        digest_history.add(sb.toString());
+        if(sb != null)
+            digest_history.add(sb.toString());
         if(log.isDebugEnabled())
             log.debug(sb.toString());
     }
@@ -1338,7 +1379,7 @@ public class NAKACK2 extends Protocol implements DiagnosticsHandler.ProbeHandler
 
         stability_msgs.add(digest);
 
-        for(Digest.DigestEntry entry: digest) {
+        for(Digest.Entry entry: digest) {
             Address member=entry.getMember();
             if(member == null)
                 continue;
@@ -1346,33 +1387,25 @@ public class NAKACK2 extends Protocol implements DiagnosticsHandler.ProbeHandler
             long hr=entry.getHighestReceivedSeqno();
 
 
-            // check whether the last seqno received for a sender P in the stability vector is > last seqno
-            // received for P in my digest. if yes, request retransmission (see "Last Message Dropped" topic
-            // in DESIGN)
+            // check whether the last seqno received for a sender P in the stability digest is > last seqno
+            // received for P in my digest. if yes, request retransmission (see "Last Message Dropped" topic in DESIGN)
             Table<Message> buf=xmit_table.get(member);
             if(buf != null) {
                 my_highest_rcvd=buf.getHighestReceived();
                 stability_highest_rcvd=hr;
 
                 if(stability_highest_rcvd >= 0 && stability_highest_rcvd > my_highest_rcvd) {
-                    if(log.isTraceEnabled()) {
-                        log.trace(local_addr + ": my_highest_rcvd (" + my_highest_rcvd + ") < stability_highest_rcvd (" +
-                                stability_highest_rcvd + "): requesting retransmission of " +
-                                    member + '#' + stability_highest_rcvd);
-                    }
+                    log.trace("%s: my_highest_rcvd (%) < stability_highest_rcvd (%): requesting retransmission of %s",
+                              local_addr, my_highest_rcvd, stability_highest_rcvd, member + "#" + stability_highest_rcvd);
                     retransmit(stability_highest_rcvd, stability_highest_rcvd, member);
                 }
             }
 
-            if(hd < 0)
-                continue;
-
-            if(log.isTraceEnabled())
-                log.trace(local_addr + ": deleting msgs <= " + hd + " from " + member);
-
-            // delete *delivered* msgs that are stable
-            if(buf != null)
-                buf.purge(hd);  // delete all messages with seqnos <= seqno
+            // delete *delivered* msgs that are stable (all messages with seqnos <= seqno)
+            if(hd >= 0 && buf != null) {
+                log.trace("%s: deleting msgs <= %s from %s", local_addr, hd, member);
+                buf.purge(hd);
+            }
         }
     }
 
@@ -1389,30 +1422,19 @@ public class NAKACK2 extends Protocol implements DiagnosticsHandler.ProbeHandler
     }
 
     protected void retransmit(SeqnoList missing_msgs, final Address sender, boolean multicast_xmit_request) {
-        Address dest=sender; // to whom do we send the XMIT request ?
+        Address dest=(multicast_xmit_request || this.use_mcast_xmit_req)? null : sender; // to whom do we send the XMIT request ?
 
-        if(multicast_xmit_request || this.use_mcast_xmit_req) {
-            dest=null;
-        }
-        else {
-            if(xmit_from_random_member && !local_addr.equals(sender)) {
-                Address random_member=(Address)Util.pickRandomElement(members);
-                if(random_member != null && !local_addr.equals(random_member)) {
-                    dest=random_member;
-                    if(log.isTraceEnabled())
-                        log.trace(local_addr + ": picked random member " + dest + " to send XMIT request to");
-                }
-            }
+        if(xmit_from_random_member && !local_addr.equals(sender)) {
+            Address random_member=Util.pickRandomElement(members);
+            if(random_member != null && !local_addr.equals(random_member))
+                dest=random_member;
         }
 
-        NakAckHeader2 hdr=NakAckHeader2.createXmitRequestHeader(sender);
-        Message retransmit_msg=new Message(dest, null, missing_msgs);
-        retransmit_msg.setFlag(Message.Flag.OOB);
-        if(log.isTraceEnabled())
-            log.trace(local_addr + ": sending XMIT_REQ (" + missing_msgs + ") to " + dest);
-        retransmit_msg.putHeader(this.id, hdr);
+        Message retransmit_msg=new Message(dest, missing_msgs).setFlag(Message.Flag.OOB)
+          .putHeader(this.id, NakAckHeader2.createXmitRequestHeader(sender));
 
-        down_prot.down(new Event(Event.MSG,retransmit_msg));
+        log.trace("%s: sending XMIT_REQ (%s) to %s", local_addr, missing_msgs, dest);
+        down_prot.down(new Event(Event.MSG, retransmit_msg));
         if(stats)
             xmit_reqs_sent.addAndGet(missing_msgs.size());
     }
@@ -1427,7 +1449,7 @@ public class NAKACK2 extends Protocol implements DiagnosticsHandler.ProbeHandler
 
     protected static long sizeOfAllMessages(Table<Message> buf, boolean include_headers) {
         Counter counter=new Counter(include_headers);
-        buf.forEach(buf.getHighestDelivered() + 1, buf.getHighestReceived(), counter);
+        buf.forEach(buf.getHighestDelivered() + 1,buf.getHighestReceived(),counter);
         return counter.getResult();
     }
 

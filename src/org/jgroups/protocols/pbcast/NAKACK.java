@@ -10,10 +10,7 @@ import org.jgroups.protocols.TP;
 import org.jgroups.stack.*;
 import org.jgroups.util.*;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
@@ -452,18 +449,12 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
 
 
     public List<Integer> providedUpServices() {
-        List<Integer> retval=new ArrayList<Integer>(5);
-        retval.add(Event.GET_DIGEST);
-        retval.add(Event.SET_DIGEST);
-        retval.add(Event.OVERWRITE_DIGEST);
-        retval.add(Event.MERGE_DIGEST);
-        return retval;
+        return Arrays.asList(Event.GET_DIGEST, Event.SET_DIGEST, Event.OVERWRITE_DIGEST, Event.MERGE_DIGEST);
     }
 
 
     public void start() throws Exception {
-        timer=getTransport().getTimer();
-        if(timer == null)
+        if((timer=getTransport().getTimer()) == null)
             throw new Exception("timer is null");
         running=true;
         leaving=false;
@@ -1001,7 +992,7 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
             Digest my_digest=getDigest();
             boolean xmitted=false;
 
-            for(Digest.DigestEntry entry: their_digest) {
+            for(Digest.Entry entry: their_digest) {
                 Address member=entry.getMember();
                 long[] my_entry=my_digest.get(member);
                 if(my_entry == null)
@@ -1029,7 +1020,7 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
                     my_digest=getDigest();
                     rebroadcast_digest_lock.lock();
                     try {
-                        if(!rebroadcasting || my_digest.isGreaterThanOrEqual(rebroadcast_digest))
+                        if(!rebroadcasting || isGreaterThanOrEqual(my_digest,rebroadcast_digest))
                             return;
                     }
                     finally {
@@ -1052,7 +1043,7 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
         boolean cancel_rebroadcasting;
         rebroadcast_digest_lock.lock();
         try {
-            cancel_rebroadcasting=tmp.isGreaterThanOrEqual(rebroadcast_digest);
+            cancel_rebroadcasting=isGreaterThanOrEqual(tmp,rebroadcast_digest);
         }
         finally {
             rebroadcast_digest_lock.unlock();
@@ -1062,24 +1053,49 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
         }
     }
 
+    /**
+     * Returns true if all senders of the current digest have their seqnos >= the ones from other
+     */
+    protected static boolean isGreaterThanOrEqual(Digest first, Digest other) {
+        if(other == null)
+            return true;
+
+        for(Digest.Entry entry: first) {
+            Address sender=entry.getMember();
+            long[] their_entry=other.get(sender);
+            if(their_entry == null)
+                continue;
+            long my_highest=entry.getHighest();
+            long their_highest=Math.max(their_entry[0],their_entry[1]);
+            if(my_highest < their_highest)
+                return false;
+        }
+        return true;
+    }
+
 
     /**
      * Remove old members from NakReceiverWindows. Essentially removes all entries from xmit_table that are not
      * in <code>members</code>. This method is not called concurrently multiple times
      */
-    private void adjustReceivers(List<Address> new_members) {
-        for(Address member: xmit_table.keySet()) {
-            if(!new_members.contains(member)) {
+    private void adjustReceivers(List<Address> members) {
+        Set<Address> keys=xmit_table.keySet();
+
+        for(Address member: keys) {
+            if(!members.contains(member)) {
                 if(local_addr != null && local_addr.equals(member))
                     continue;
                 NakReceiverWindow win=xmit_table.remove(member);
                 if(win != null) {
                     win.destroy();
-                    if(log.isDebugEnabled())
-                        log.debug("removed " + member + " from xmit_table (not member anymore)");
+                    log.debug("%s: removed %s from xmit_table (not member anymore)", local_addr, member);
                 }
             }
         }
+
+        for(Address member: this.members)
+            if(!keys.contains(member))
+                xmit_table.putIfAbsent(member, createNakReceiverWindow(member, 0));
     }
 
 
@@ -1087,14 +1103,23 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
      * Returns a message digest: for each member P the highest delivered and received seqno is added
      */
     public Digest getDigest() {
-        final Map<Address,long[]> map=new HashMap<Address,long[]>();
-        for(Map.Entry<Address,NakReceiverWindow> entry: xmit_table.entrySet()) {
-            Address sender=entry.getKey(); // guaranteed to be non-null (CCHM)
-            NakReceiverWindow win=entry.getValue(); // guaranteed to be non-null (CCHM)
-            long[] seqnos=win.getDigest();
-            map.put(sender, seqnos);
+        if(view == null)
+            return null;
+        View current_view=view;
+        long[] seqnos=new long[current_view.size() *2];
+        int index=0;
+
+        for(Address member: current_view) {
+            NakReceiverWindow win=xmit_table.get(member);
+            if(win == null)
+                throw new IllegalStateException("window not found for member " + member); // ? revisit
+            long[] tmp=win.getDigest();
+            seqnos[index]=tmp[0];
+            index++;
+            seqnos[index]=tmp[1];
+            index++;
         }
-        return new Digest(map);
+        return new Digest(current_view, seqnos);
     }
 
 
@@ -1105,8 +1130,9 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
         if(win == null)
             return null;
         long[] seqnos=win.getDigest();
-        return new Digest(mbr, seqnos[0], seqnos[1]);
+        return new MutableDigest(view).set(mbr, seqnos[0], seqnos[1]);
     }
+
 
 
     /**
@@ -1139,7 +1165,7 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
         StringBuilder sb=new StringBuilder("\n[overwriteDigest()]\n");
         sb.append("existing digest:  " + getDigest()).append("\nnew digest:       " + digest);
 
-        for(Digest.DigestEntry entry: digest) {
+        for(Digest.Entry entry: digest) {
             Address member=entry.getMember();
             if(member == null)
                 continue;
@@ -1181,7 +1207,7 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
         sb.append("existing digest:  " + getDigest()).append("\nnew digest:       " + digest);
         
         boolean set_own_seqno=false;
-        for(Digest.DigestEntry entry: digest) {
+        for(Digest.Entry entry: digest) {
             Address member=entry.getMember();
             if(member == null)
                 continue;
@@ -1259,7 +1285,7 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
 
         long high_seqno_delivered, high_seqno_received;
 
-        for(Digest.DigestEntry entry: digest) {
+        for(Digest.Entry entry: digest) {
             Address member=entry.getMember();
             if(member == null)
                 continue;

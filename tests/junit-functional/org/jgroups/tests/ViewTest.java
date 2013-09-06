@@ -17,9 +17,9 @@ import java.util.List;
 
 @Test(groups=Global.FUNCTIONAL)
 public class ViewTest {
-    Address a, b, c, d, e, f, g, h, i;
-    View view;
-    List<Address> members;
+    protected Address       a, b, c, d, e, f, g, h, i;
+    protected View          view;
+    protected List<Address> members;
     
 
    
@@ -27,17 +27,16 @@ public class ViewTest {
     @BeforeClass
     void setUp() throws Exception {
         a=Util.createRandomAddress("A");
-        b=a;
-        c=b;
+        b=Util.createRandomAddress("B");
+        c=Util.createRandomAddress("C");
         d=Util.createRandomAddress("D");
         e=Util.createRandomAddress("E");
         f=Util.createRandomAddress("F");
         g=Util.createRandomAddress("G");
         h=Util.createRandomAddress("H");
         i=Util.createRandomAddress("I");
-        ViewId id=new ViewId(a, 34);
-        members=Arrays.asList(a, b, d, e, f, g, h);
-        view=new View(id, members);
+        members=Arrays.asList(a, b, c, d, e, f, g, h);
+        view=View.create(a, 34, a, b, c, d, e, f, g, h);
 
     }
 
@@ -110,5 +109,56 @@ public class ViewTest {
     }
 
 
+    public void testDiff() {
+        View one=null;
+        View two=View.create(a, 1, a, b, c);
+        Address[][] diff=View.diff(one,two);
+        System.out.println("diffs: " + printDiff(diff));
+        Address[] joined=diff[0], left=diff[1];
+        assert joined.length == 3;
+        assert joined[0].equals(a) && joined[1].equals(b) && joined[2].equals(c);
+        assert left.length == 0;
+    }
 
+    public void testDiff2() {
+        View one=View.create(a, 1, a,b,c);
+        View two=View.create(a, 2, a,b,c,d,e);
+        Address[][] diff=View.diff(one,two);
+        System.out.println("diffs: " + printDiff(diff));
+        Address[] joined=diff[0], left=diff[1];
+        assert joined.length == 2;
+        assert joined[0].equals(d) && joined[1].equals(e);
+        assert left.length == 0;
+    }
+
+    public void testDiff3() {
+        View one=View.create(a, 1, a,b,c,d,e);
+        View two=View.create(a, 2, a,b,c);
+        Address[][] diff=View.diff(one,two);
+        System.out.println("diffs: " + printDiff(diff));
+        Address[] joined=diff[0], left=diff[1];
+        assert joined.length == 0;
+        assert left.length == 2;
+        assert left[0].equals(d) && left[1].equals(e);
+    }
+
+    public void testDiff4() {
+        View one=View.create(a, 1, a,b,c,d,e,f,g);
+        View two=View.create(b, 2, b,c,d,g,h,i);
+        Address[][] diff=View.diff(one,two);
+        System.out.println("diffs: " + printDiff(diff));
+        Address[] joined=diff[0], left=diff[1];
+        assert joined.length == 2;
+        assert joined[0].equals(h) && joined[1].equals(i);
+
+        assert left.length == 3;
+        assert left[0].equals(a) && left[1].equals(e) && left[2].equals(f);
+    }
+
+    protected static String printDiff(Address[][] diff) {
+        StringBuilder sb=new StringBuilder();
+        Address[] joined=diff[0], left=diff[1];
+        sb.append("joined: ").append(Arrays.toString(joined)).append(", left: ").append(Arrays.toString(left));
+        return sb.toString();
+    }
 }

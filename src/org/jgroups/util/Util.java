@@ -1160,104 +1160,6 @@ public class Util {
     }
 
 
-    /** Generates a buffer from a digest. Writes the ViewId first, and the members are simply indices into the
-     * view. The receiving side needs to have access to the same view to decode the buffer. */
-    public static Buffer digestToBuffer(final View view, final Digest digest) throws Exception {
-        assert view != null && digest != null;
-        ExposedByteArrayOutputStream output=new ExposedByteArrayOutputStream(digest.size() * 10); // ~ 10 bytes per member
-        ExposedDataOutputStream out=new ExposedDataOutputStream(output);
-        view.getViewId().writeTo(out);
-
-        for(Address member: view) {
-            long[] seqnos=digest.get(member);
-            if(seqnos == null)
-                throw new IllegalStateException("members in view and digest differ: view=" + view + ", digest=" + digest);
-            Util.writeLongSequence(seqnos[0], seqnos[1], out);
-        }
-        return output.getBuffer();
-    }
-
-
-    /** Reads a digest encoded with {@link #digestToBuffer(org.jgroups.View,Digest)}. If the view ID encoded in
-     * the buffer is not the same as the expected view, an exception is thrown. */
-    public static Digest digestFromBuffer(final View expected, final byte[] buffer) throws Exception {
-        assert expected != null && buffer != null;
-        ExposedByteArrayInputStream input=new ExposedByteArrayInputStream(buffer);
-        DataInput in=new DataInputStream(input);
-        ViewId view_id=new ViewId();
-        view_id.readFrom(in);
-
-        if(!view_id.equals(expected.getViewId()))
-            throw new IllegalStateException("view IDs don't match: received=" + view_id + ", expected=" + expected.getViewId());
-
-        int length=expected.size();
-        long[] seqnos=new long[length *2];
-        for(int i=0; i < length; i++) {
-            long[] seqno_pair=Util.readLongSequence(in);
-            seqnos[i*2]=seqno_pair[0];
-            seqnos[i*2+1]=seqno_pair[1];
-        }
-        return new Digest(expected.getMembers(), seqnos);
-    }
-
-    public static Digest digestFromBuffer(final View expected, final Buffer buffer) throws Exception {
-        return digestFromBuffer(expected,buffer.getBuf());
-    }
-
-    public static String digestToString(final View expected, final byte[] buffer) {
-        assert expected != null && buffer != null;
-        StringBuilder sb=new StringBuilder();
-        ExposedByteArrayInputStream input=new ExposedByteArrayInputStream(buffer);
-        DataInput in=new DataInputStream(input);
-        ViewId view_id=new ViewId();
-        List<Address> members=expected.getMembers();
-        try {
-            view_id.readFrom(in);
-            if(!view_id.equals(expected.getViewId()))
-                sb.append("view IDs don't match: received=" + view_id + ", expected=" + expected.getViewId());
-            else {
-                int length=expected.size();
-                if(length == 0) return "[]";
-                boolean first=true;
-                int     count=0;
-
-                for(int i=0; i < length; i++) {
-                    Address member=members.get(i);
-                    long[] seqno=Util.readLongSequence(in);
-                    if(!first)
-                        sb.append(", ");
-                    else
-                        first=false;
-                    sb.append(member).append(": ").append('[').append(seqno[0]);
-                    if(seqno[1] >= 0)
-                        sb.append(" (").append(seqno[1]).append(")");
-                    sb.append("]");
-                    if(Util.MAX_LIST_PRINT_SIZE > 0 && ++count >= Util.MAX_LIST_PRINT_SIZE) {
-                        if(length > count)
-                            sb.append(", ...");
-                        break;
-                    }
-                }
-            }
-        }
-        catch(Exception e) {
-            sb.append(e);
-        }
-        return sb.toString();
-    }
-
-    /** Returns true if the members in the digest and the view match */
-    public static boolean digestMatchesView(final Digest digest, final View view) {
-        if(view.size() != digest.size())
-            return false;
-        for(Digest.DigestEntry entry: digest) {
-            Address digest_member=entry.getMember();
-            if(!view.containsMember(digest_member))
-                return false;
-        }
-        return true;
-    }
-
 
     public static void writeString(String s, DataOutput out) throws Exception {
         if(s != null) {
@@ -2384,19 +2286,6 @@ public class Util {
         return true;
     }
 
-    /**
-     * Returns a list of members which left from view one to two
-     * @param one
-     * @param two
-     * @return
-     */
-    public static List<Address> leftMembers(View one, View two) {
-        if(one == null || two == null)
-            return null;
-        List<Address> retval=new ArrayList<Address>(one.getMembers());
-        retval.removeAll(two.getMembers());
-        return retval;
-    }
 
     public static List<Address> leftMembers(Collection<Address> old_list, Collection<Address> new_list) {
         if(old_list == null || new_list == null)
@@ -2644,11 +2533,6 @@ public class Util {
     }
 
 
-    public static View createView(Address coord, long id, Address ... members) {
-        List<Address> mbrs=new ArrayList<Address>();
-        mbrs.addAll(Arrays.asList(members));
-        return new View(coord, id, mbrs);
-    }
 
     public static JChannel createChannel(Protocol... prots) throws Exception {
         JChannel ch=new JChannel(false);

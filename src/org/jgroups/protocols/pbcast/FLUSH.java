@@ -800,7 +800,7 @@ public class FLUSH extends Protocol {
 
             needsReconciliationPhase = enable_reconciliation && flushCompleted && hasVirtualSynchronyGaps();
             if (needsReconciliationPhase) {
-                Digest d = findHighestSequences();
+                Digest d = findHighestSequences(currentView);
                 msg = new Message().setFlag(Message.Flag.OOB);
                 FlushHeader fh = new FlushHeader(FlushHeader.FLUSH_RECONCILE, currentViewId(),flushMembers);
                 reconcileOks.clear();
@@ -840,27 +840,45 @@ public class FLUSH extends Protocol {
     private boolean hasVirtualSynchronyGaps() {
         ArrayList<Digest> digests = new ArrayList<Digest>();
         digests.addAll(flushCompletedMap.values());
-        Digest firstDigest = digests.get(0);
-        List<Digest> remainingDigests = digests.subList(1, digests.size());
-        for (Digest digest : remainingDigests) {
-            Digest diff = firstDigest.difference(digest);
-            if (diff != null)
-                return true;
-        }
-        return false;
+        return !same(digests);
     }
 
-    private Digest findHighestSequences() {
-        Digest result = null;
-        List<Digest> digests = new ArrayList<Digest>(flushCompletedMap.values());
-
-        result = digests.get(0);
-        List<Digest> remainingDigests = digests.subList(1, digests.size());
-
-        for (Digest digestG : remainingDigests) {
-            result = result.highestSequence(digestG);
+    protected static boolean same(final List<Digest> digests) {
+        if(digests == null) return false;
+        Digest first=digests.get(0);
+        for(int i=1; i < digests.size(); i++) {
+            Digest current=digests.get(i);
+            if(!first.equals(current))
+                return false;
         }
-        return result;
+        return true;
+    }
+
+    private Digest findHighestSequences(View view) {
+        List<Digest> digests = new ArrayList<Digest>(flushCompletedMap.values());
+        return maxSeqnos(view,digests);
+    }
+
+
+    /** Returns a digest which contains, for all members of view, the highest delivered and received
+     * seqno of all digests */
+    protected static Digest maxSeqnos(final View view, List<Digest> digests) {
+        if(view == null || digests == null)
+            return null;
+        List<Address> members=view.getMembers();
+        long[] highest_seqnos=new long[view.size()];
+        for(Digest digest: digests) {
+            for(int i=0; i < members.size(); i++) {
+                Address member=members.get(i);
+                long[] seqno_pair=digest.get(member);
+                if(seqno_pair != null) {
+                    int hd_index=i*2, hr_index=hd_index+1;
+                    highest_seqnos[hd_index]=Math.max(highest_seqnos[hd_index], seqno_pair[0]);
+                    highest_seqnos[hr_index]=Math.max(highest_seqnos[hr_index], seqno_pair[1]);
+                }
+            }
+        }
+        return new Digest(view, highest_seqnos);
     }
 
     private void onSuspect(Address address) {
