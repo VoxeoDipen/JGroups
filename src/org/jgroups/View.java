@@ -3,10 +3,12 @@ package org.jgroups;
 
 
 import org.jgroups.annotations.Immutable;
+import org.jgroups.util.ArrayIterator;
 import org.jgroups.util.Streamable;
 import org.jgroups.util.Util;
 
-import java.io.*;
+import java.io.DataInput;
+import java.io.DataOutput;
 import java.util.*;
 
 /**
@@ -254,30 +256,6 @@ public class View implements Comparable<View>, Streamable, Iterable<Address> {
     }
 
     public Iterator<Address> iterator() {
-        return new MembersIterator(this.members);
-    }
-
-
-    protected static class MembersIterator implements Iterator<Address> {
-        protected int             index=0;
-        protected final Address[] mbrs;
-
-        public MembersIterator(Address[] mbrs) {
-            this.mbrs=mbrs;
-        }
-
-        public boolean hasNext() {
-            return index < mbrs.length;
-        }
-
-        public Address next() {
-            if(index >= mbrs.length)
-                throw new NoSuchElementException("index=" + index + ", length=" + mbrs.length);
-            return mbrs[index++];
-        }
-
-        public void remove() {
-            throw new UnsupportedOperationException();
-        }
+        return new ArrayIterator(this.members);
     }
 }

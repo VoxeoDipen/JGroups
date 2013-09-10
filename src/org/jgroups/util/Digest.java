@@ -2,8 +2,6 @@ package org.jgroups.util;
 
 import org.jgroups.Address;
 import org.jgroups.Global;
-import org.jgroups.View;
-import org.jgroups.ViewId;
 import org.jgroups.annotations.Immutable;
 
 import java.io.DataInput;
@@ -15,20 +13,22 @@ import static java.lang.Math.max;
 
 /**
  * A message digest containing - for each member - the highest seqno delivered (hd) and the highest seqno received (hr).
- * The seqnos are stored according to the order of the members in the associated view, ie. seqnos[0] is the hd for
- * member at index 0, seqnos[1] is the hr for the same member, seqnos[2] is the hd for member at index 1 and so on.<p/>
- * Field 'view' is usually a View referring to an existing view. Thus, many digests can refer to the same view, which
- * is memory efficient. When unmarshalled, 'view' can also be a ViewdId, used to check if the caller's view-id and the
- * digest's view-id match. If so, usually {@link #view(org.jgroups.View)} is called to set the view to a real View.
+ * The seqnos are stored according to the order of the members in the associated membership, ie. seqnos[0] is the hd for
+ * member members[0], seqnos[1] is the hr for the same member, seqnos[2] is the hd for members[1] and so on.<p/>
+ * Field 'members' may refer to the View.members, e.g. in a JoinRsp where we ship a view and a digest referring to
+ * the view's membership. This is done to conserve memory.<p/>
+ * This class is immutable except for 2 cases:
+ * <ul>
+ *     <li>The contents are read when unmarshalling (readFrom())</li>
+ *     <li>The membership is set with members(). This must only be done directly after unmarshalling</li>
+ * </ul>
  * @author Bela Ban
  */
+@Immutable
 public class Digest implements Streamable, Iterable<Digest.Entry> {
 
-    /** Contains a ViewId or a View. Done to save memory and simulate a C union. Usually, the View is set
-     * in the constructor. However, when received over the network and unmarshalled, a ViewId will be set.
-     * However, it is expected that a View is set immediately after unmarshalling. So most of the time, view
-     * should be of type View. Note that view must <em>never be null</em>. */
-    protected Object    view;
+    // Stores the members corresponding to the seqnos. Example: members[2] --> hd=seqnos[4], hr=seqnos[5]
+    protected Address[] members;
 
     // Stores highest delivered and received seqnos. This array is double the size of members. We store HD-HR pairs,
     // so to get the HD seqno for member P at index i --> seqnos[i*2], to get the HR --> seqnos[i*2 +1]
@@ -40,51 +40,54 @@ public class Digest implements Streamable, Iterable<Digest.Entry> {
     public Digest() {
     }
 
-    public Digest(final View view, long[] seqnos) {
-        if(view == null) throw new IllegalArgumentException("view is null");
+    public Digest(final Address[] members, long[] seqnos) {
+        if(members == null) throw new IllegalArgumentException("members is null");
         if(seqnos == null) throw new IllegalArgumentException("seqnos is null");
-        this.view=view;
+        this.members=members;
         this.seqnos=seqnos;
         checkPostcondition();
+    }
+
+    /** Only used internally, don't use ! */
+    public Digest(final Address[] members) {
+        if(members == null) throw new IllegalArgumentException("members is null");
+        this.members=members;
     }
 
 
     public Digest(Digest digest) {
         if(digest == null)
             return;
-        int size=digest.capacity();
-        seqnos=new long[size * 2];
-        System.arraycopy(digest.seqnos,0,seqnos,0,size * 2);
-        this.view=digest.view;
+        this.members=digest.members; // the members list is immutable
+        this.seqnos=(digest instanceof MutableDigest || this instanceof MutableDigest)?
+          Arrays.copyOf((digest).seqnos, digest.seqnos.length) : digest.seqnos;
         checkPostcondition();
     }
 
+    /** Creates a new digest from an existing map by copying the keys and values from map */
+    public Digest(Map<Address, long[]> map) {
+        createArrays(map);
+        checkPostcondition();
+    }
+
+    public Digest(Address sender, long highest_delivered, long highest_received) {
+        members=new Address[]{sender};
+        seqnos=new long[]{highest_delivered,highest_received};
+    }
+
+
 
     public int capacity() {
-        return seqnos != null? seqnos.length /2 : 0;
+        return members != null? members.length : 0;
     }
 
-    public View view() {
-        return view instanceof View? (View)view : null;
-    }
-
-    public Digest view(View view) {
-        if(view == null || view() != null) // the view can only be set once
-            return this;
-        ViewId view_id=viewId();
-        if(view_id != null && !view_id.equals(view.getViewId()))
-            return this;
-        this.view=view;
-        return this;
-    }
-
-    public ViewId viewId() {
-        return view instanceof ViewId? (ViewId)view : view instanceof View? ((View)view).getViewId() : null;
-    }
-
-
-    public boolean contains(Address member) {
-        return view().containsMember(member);
+    public boolean contains(Address mbr) {
+        if(mbr == null || members == null)
+            return false;
+        for(Address member: members)
+            if(member != null && member.equals(mbr))
+                return true;
+        return false;
     }
 
     public boolean containsAll(Address ... members) {
@@ -95,12 +98,12 @@ public class Digest implements Streamable, Iterable<Digest.Entry> {
     }
 
 
-    /** 2 digests are equal if their view-ids match and all highest-delivered and highest-received seqnos match */
+    /** 2 digests are equal if their memberships match and all highest-delivered and highest-received seqnos match */
     public boolean equals(Object obj) {
         if(this == obj)
             return true;
         Digest other=(Digest)obj;
-        return viewId().equals(other.viewId()) && Arrays.equals(seqnos,other.seqnos);
+        return Arrays.equals(members, other.members) && Arrays.equals(seqnos,other.seqnos);
     }
 
     /**
@@ -122,53 +125,74 @@ public class Digest implements Streamable, Iterable<Digest.Entry> {
 
 
     public Digest copy() {
-        return new Digest(view(), Arrays.copyOf(seqnos, seqnos.length));
+        return new Digest(members, Arrays.copyOf(seqnos, seqnos.length));
     }
 
-    // we're only marshalling the ViewId and the seqnos
     public void writeTo(DataOutput out) throws Exception {
-        Util.writeViewId(viewId(), out);
-        out.writeShort(capacity());
+        writeTo(out, true);
+    }
+
+    public void writeTo(DataOutput out, boolean write_addrs) throws Exception {
+        if(write_addrs)
+            Util.writeAddresses(members, out);
+        else
+            out.writeShort(members.length);
         for(int i=0; i < capacity(); i++)
             Util.writeLongSequence(seqnos[i * 2], seqnos[i * 2 +1], out);
     }
 
-
     public void readFrom(DataInput in) throws Exception {
-        this.view=Util.readViewId(in);
-        short size=in.readShort();
-        this.seqnos=new long[size*2];
-        for(int i=0; i < size; i++) {
+        readFrom(in, true);
+    }
+
+    public void readFrom(DataInput in, boolean read_addrs) throws Exception {
+        if(read_addrs) {
+            members=Util.readAddresses(in);
+            seqnos=new long[capacity() * 2];
+        }
+        else
+            seqnos=new long[in.readShort() *2];
+
+        for(int i=0; i < seqnos.length/2; i++) {
             long[] tmp=Util.readLongSequence(in);
             seqnos[i * 2]=tmp[0];
             seqnos[i * 2 +1]=tmp[1];
         }
     }
 
-
-    public long serializedSize() {
-        long retval=Global.SHORT_SIZE + Util.size(viewId()); // number of elements in 'senders'
-        for(int i=0; i < capacity(); i++)
+    public long serializedSize(boolean with_members) {
+        long retval=with_members? Util.size(members) : Global.SHORT_SIZE;
+        for(int i=0; i < members.length; i++)
             retval+=Util.size(seqnos[i*2], seqnos[i*2+1]);
         return retval;
     }
 
 
     public String toString() {
-        StringBuilder sb=new StringBuilder(viewId() + ": ");
+        return toString(members, true);
+    }
+
+    public String toString(final Digest order) {
+        return order != null? toString(order.members, true) : toString(members, true);
+    }
+
+    public String toString(final Address[] order, boolean print_highest_received) {
+        StringBuilder sb=new StringBuilder();
         boolean first=true;
-        if(capacity() == 0 || view() == null) return view != null? viewId().toString() : "[]";
+        if(capacity() == 0) return "[]";
 
         int count=0, capacity=capacity();
-        for(Entry entry: this) {
-            Address key=entry.getMember();
+        for(Address key: order) {
+            long[] tmp_seqnos=key != null? get(key) : null;
+            if(key == null || tmp_seqnos == null)
+                continue;
             if(!first)
                 sb.append(", ");
             else
                 first=false;
-            sb.append(key).append(": ").append('[').append(entry.getHighestDeliveredSeqno());
-            if(entry.getHighestReceivedSeqno() >= 0)
-                sb.append(" (").append(entry.getHighestReceivedSeqno()).append(")");
+            sb.append(key).append(": ").append('[').append(tmp_seqnos[0]);
+            if(print_highest_received && tmp_seqnos[1] >= 0)
+                sb.append(" (").append(tmp_seqnos[1]).append(")");
             sb.append("]");
             if(Util.MAX_LIST_PRINT_SIZE > 0 && ++count >= Util.MAX_LIST_PRINT_SIZE) {
                 if(capacity > count)
@@ -179,61 +203,37 @@ public class Digest implements Streamable, Iterable<Digest.Entry> {
         return sb.toString();
     }
 
-    public String toStringSorted() {
-        return toStringSorted(true);
-    }
-
-    public String toStringSorted(boolean print_highest_received) {
-        StringBuilder sb=new StringBuilder();
-        boolean first=true;
-        if(capacity() == 0)  return view != null? viewId().toString() : "[]";
-
-        TreeMap<Address,long[]> copy=new TreeMap<Address,long[]>();
-        for(Entry entry: this) {
-            Address addr=entry.getMember();
-            long[] tmp={entry.getHighestDeliveredSeqno(), entry.getHighestReceivedSeqno()};
-            copy.put(addr, tmp);
+    protected int find(Address mbr) {
+        if(mbr == null || members == null)
+            return -1;
+        for(int i=0; i < members.length; i++) {
+            Address member=members[i];
+            if(member != null && member.equals(mbr))
+                return i;
         }
+        return -1;
+    }
 
-        int count=0, size=copy.size();
-        for(Map.Entry<Address,long[]> entry: copy.entrySet()) {
-            Address key=entry.getKey();
-            long[] val=entry.getValue();
-            if(!first)
-                sb.append(", ");
-            else
-                first=false;
-            sb.append(key).append(": ").append('[').append(val[0]);
-            if(print_highest_received)
-                sb.append(" (").append(val[1]).append(")");
-            sb.append("]");
-            if(Util.MAX_LIST_PRINT_SIZE > 0 && ++count >= Util.MAX_LIST_PRINT_SIZE) {
-                if(size > count)
-                    sb.append(", ...");
-                break;
-            }
+
+    protected void createArrays(Map<Address,long[]> map) {
+        int size=map.size();
+        members=new Address[size];
+        seqnos=new long[size * 2];
+
+        int index=0;
+        for(Map.Entry<Address,long[]> entry: map.entrySet()) {
+            members[index]=entry.getKey();
+            seqnos[index * 2   ]=entry.getValue()[0];
+            seqnos[index * 2 +1]=entry.getValue()[1];
+            index++;
         }
-        return sb.toString();
     }
 
 
-    public String printHighestDeliveredSeqnos() {
-        return toStringSorted(false);
-    }
-
-
-
-
-    protected int find(Address member) {
-        return view().getMembers().indexOf(member);
-    }
-
-
-    /** view.size() == capacity() */
     protected void checkPostcondition() {
-        int size=view().size();
+        int size=members.length;
         if(size*2 != seqnos.length)
-            throw new IllegalArgumentException("seqnos.length (" + seqnos.length + ") is not twice the view size (" + size + ")");
+            throw new IllegalArgumentException("seqnos.length (" + seqnos.length + ") is not twice the members size (" + size + ")");
     }
 
 
@@ -247,8 +247,9 @@ public class Digest implements Streamable, Iterable<Digest.Entry> {
         public Entry next() {
             if(index >= capacity())
                 throw new NoSuchElementException("index=" + index + ", capacity=" + capacity());
-
-            Entry entry=new Entry(view().getMembers().get(index), seqnos[index * 2], seqnos[index * 2 +1]);
+            Address mbr=members != null? members[index] : null;
+            long hd=seqnos != null? seqnos[index*2] : 0, hr=seqnos != null? seqnos[index*2+1] : 0;
+            Entry entry=new Entry(mbr, hd, hr);
             index++;
             return entry;
         }

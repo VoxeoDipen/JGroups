@@ -1,10 +1,11 @@
 package org.jgroups.util;
 
 import org.jgroups.Address;
-import org.jgroups.View;
+
+import java.util.Collection;
 
 /**
- * A mutable version of Digest. Has a fixed size (that of the view), but individual elements can be changed.
+ * A mutable version of Digest. Has a fixed size (that of the members), but individual seqnos can be changed.
  * This class is not synchronized
  * @author Bela Ban
  */
@@ -14,20 +15,25 @@ public class MutableDigest extends Digest {
     }
 
 
-    public MutableDigest(View view, long[] seqnos) {
-        super(view,seqnos);
+    public MutableDigest(Address[] members, long[] seqnos) {
+        this(members);
+        if(seqnos != null)
+            System.arraycopy(seqnos, 0, this.seqnos, 0, seqnos.length);
     }
+
+    public MutableDigest(Address[] members) {
+        super(members, new long[members.length *2]);
+    }
+
+    public MutableDigest(Collection<Address> members) {
+        super(members.toArray(new Address[members.size()]), new long[members.size()*2]);
+    }
+
 
     public MutableDigest(Digest digest) {
         super(digest);
     }
 
-    public MutableDigest(final View view) {
-        if(view == null) throw new IllegalArgumentException("view is null");
-        this.view=view;
-        seqnos=new long[view().size() * 2];
-        checkPostcondition();
-    }
 
     public MutableDigest set(Address member, long highest_delivered_seqno, long highest_received_seqno) {
         if(member == null)

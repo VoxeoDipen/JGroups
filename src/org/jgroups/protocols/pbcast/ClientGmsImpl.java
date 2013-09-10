@@ -298,7 +298,7 @@ public class ClientGmsImpl extends GmsImpl {
         View new_view=View.create(mbr, 0, mbr); // create singleton view with mbr as only member
 
         // set the initial digest (since I'm the first member)
-        Digest initial_digest=new Digest(new_view, new long[]{0,0});
+        Digest initial_digest=new Digest(mbr, 0, 0);
         gms.installView(new_view, initial_digest);
         gms.becomeCoordinator(); // not really necessary - installView() should do it
 

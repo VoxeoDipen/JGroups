@@ -203,8 +203,8 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
     @GuardedBy("rebroadcast_digest_lock")
     private Digest rebroadcast_digest=null;
 
-    /** BoundedList<Digest>, keeps the last 10 stability messages */
-    protected final BoundedList<Digest> stability_msgs=new BoundedList<Digest>(10);
+    /** Keeps the last 10 stability messages */
+    protected final BoundedList<String> stability_msgs=new BoundedList<String>(10);
 
     /** Keeps a bounded list of the last N digest sets */
     protected final BoundedList<String> digest_history=new BoundedList<String>(10);
@@ -400,7 +400,7 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
     public String printStabilityHistory() {
         StringBuilder sb=new StringBuilder();
         int i=1;
-        for(Digest digest: stability_msgs) {
+        for(String digest: stability_msgs) {
             sb.append(i++).append(": ").append(digest).append("\n");
         }
         return sb.toString();
@@ -1103,23 +1103,14 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
      * Returns a message digest: for each member P the highest delivered and received seqno is added
      */
     public Digest getDigest() {
-        if(view == null)
-            return null;
-        View current_view=view;
-        long[] seqnos=new long[current_view.size() *2];
-        int index=0;
-
-        for(Address member: current_view) {
-            NakReceiverWindow win=xmit_table.get(member);
-            if(win == null)
-                throw new IllegalStateException("window not found for member " + member); // ? revisit
-            long[] tmp=win.getDigest();
-            seqnos[index]=tmp[0];
-            index++;
-            seqnos[index]=tmp[1];
-            index++;
+        final Map<Address,long[]> map=new HashMap<Address,long[]>();
+        for(Map.Entry<Address,NakReceiverWindow> entry: xmit_table.entrySet()) {
+            Address sender=entry.getKey(); // guaranteed to be non-null (CCHM)
+            NakReceiverWindow win=entry.getValue(); // guaranteed to be non-null (CCHM)
+            long[] seqnos=win.getDigest();
+            map.put(sender, seqnos);
         }
-        return new Digest(current_view, seqnos);
+        return new Digest(map);
     }
 
 
@@ -1130,7 +1121,7 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
         if(win == null)
             return null;
         long[] seqnos=win.getDigest();
-        return new MutableDigest(view).set(mbr, seqnos[0], seqnos[1]);
+        return new Digest(mbr, seqnos[0], seqnos[1]);
     }
 
 
@@ -1158,7 +1149,7 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
      * Overwrites existing entries, but does NOT remove entries not found in the digest
      * @param digest
      */
-    private void overwriteDigest(Digest digest) {
+    private void overwriteDigest(final Digest digest) {
         if(digest == null)
             return;
 
@@ -1185,7 +1176,7 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
             win=createNakReceiverWindow(member, highest_delivered_seqno);
             xmit_table.put(member, win);
         }
-        sb.append("\n").append("resulting digest: " + getDigest());
+        sb.append("\n").append("resulting digest: " + getDigest().toString(digest));
         digest_history.add(sb.toString());
         if(log.isDebugEnabled())
             log.debug(sb.toString());
@@ -1199,7 +1190,7 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
      * @param digest The digest
      * @param merge Whether to merge the new digest with our own, or not
      */
-    private void setDigest(Digest digest, boolean merge) {
+    private void setDigest(final Digest digest, boolean merge) {
         if(digest == null)
             return;
 
@@ -1234,7 +1225,7 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
             win=createNakReceiverWindow(member, highest_delivered_seqno);
             xmit_table.put(member, win);
         }
-        sb.append("\n").append("resulting digest: " + getDigest());
+        sb.append("\n").append("resulting digest: " + getDigest().toString(digest));
         if(set_own_seqno)
             sb.append("\nnew seqno for " + local_addr + ": " + seqno);
         digest_history.add(sb.toString());
@@ -1272,8 +1263,7 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
         long stability_highest_rcvd; // highest seqno received in the stability vector for a sender P
 
         if(members == null || local_addr == null || digest == null) {
-            if(log.isWarnEnabled())
-                log.warn("members, local_addr or digest are null !");
+            log.warn("members, local_addr or digest are null !");
             return;
         }
 
@@ -1281,7 +1271,7 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
             log.trace("received stable digest " + digest);
         }
 
-        stability_msgs.add(digest);
+        stability_msgs.add(digest.toString());
 
         long high_seqno_delivered, high_seqno_received;
 

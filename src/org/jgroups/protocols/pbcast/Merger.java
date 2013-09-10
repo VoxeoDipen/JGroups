@@ -69,7 +69,6 @@ public class Merger {
             return;
         }
 
-
         Membership tmp=new Membership(coords); // establish a deterministic order, so that coords can elect leader
         tmp.sort();
         Address merge_leader=tmp.elementAt(0);
@@ -92,7 +91,7 @@ public class Merger {
      * If a merge is already in progress, send back a MergeData with the merge_rejected field set to true.
      * @param sender The address of the merge leader
      * @param merge_id The merge ID
-     * @param mbrs The set of members from which we expect responses
+     * @param mbrs The set of members from which we expect responses. Guaranteed to be non-null
      */
     public void handleMergeRequest(Address sender, MergeId merge_id, Collection<? extends Address> mbrs) {
         try {
@@ -238,7 +237,7 @@ public class Merger {
             }
             if(modified) {
                 View old_view=entry.getValue();
-                entry.setValue(new View(old_view.getVid(), members));
+                entry.setValue(new View(old_view.getViewId(), members));
             }
         }
     }
@@ -246,8 +245,8 @@ public class Merger {
 
     /** Send back a response containing view and digest to sender */
     private void sendMergeResponse(Address sender, View view, Digest digest, MergeId merge_id) {
-        Message msg=new Message(sender).setFlag(Message.Flag.OOB, Message.Flag.INTERNAL)
-          .putHeader(gms.getId(), new GMS.GmsHeader(GMS.GmsHeader.MERGE_RSP).mergeId(merge_id).view(view).digest(digest));
+        Message msg=new Message(sender).setFlag(Message.Flag.OOB,Message.Flag.INTERNAL)
+          .putHeader(gms.getId(),new GMS.GmsHeader(GMS.GmsHeader.MERGE_RSP,view,digest).mergeId(merge_id));
         gms.getDownProtocol().down(new Event(Event.MSG,msg));
     }
 
@@ -278,8 +277,7 @@ public class Merger {
         long start=System.currentTimeMillis();
         for(Address coord: coords) {
             Message msg=new Message(coord)
-              .putHeader(gms.getId(),
-                         new GMS.GmsHeader(GMS.GmsHeader.INSTALL_MERGE_VIEW).view(view).digest(digest).mergeId(merge_id));
+              .putHeader(gms.getId(),new GMS.GmsHeader(GMS.GmsHeader.INSTALL_MERGE_VIEW,view,digest).mergeId(merge_id));
             gms.getDownProtocol().down(new Event(Event.MSG, msg));
         }
 
@@ -320,14 +318,16 @@ public class Merger {
 
 
     /**
-     * Multicasts a GET_DIGEST_REQ to all current members and waits for all responses (GET_DIGEST_RSP) or N ms.
+     * Multicasts a GET_DIGEST_REQ to all members of this sub partition and waits for all responses
+     * (GET_DIGEST_RSP) or N ms.
      */
     private Digest fetchDigestsFromAllMembersInSubPartition(final View view, MergeId merge_id) {
         final List<Address> current_mbrs=view.getMembers();
         
         // Optimization: if we're the only member, we don't need to multicast the get-digest message
         if(current_mbrs == null || current_mbrs.size() == 1 && current_mbrs.get(0).equals(gms.local_addr))
-            return (Digest)gms.getDownProtocol().down(new Event(Event.GET_DIGEST, gms.local_addr));
+            return new MutableDigest(view.getMembersRaw())
+              .set((Digest)gms.getDownProtocol().down(new Event(Event.GET_DIGEST, gms.local_addr)));
 
         Message get_digest_req=new Message().setFlag(Message.Flag.OOB, Message.Flag.INTERNAL)
           .putHeader(gms.getId(), new GMS.GmsHeader(GMS.GmsHeader.GET_DIGEST_REQ).mergeId(merge_id));
@@ -349,12 +349,11 @@ public class Merger {
                 log.trace("%s: fetched incomplete digests (after timeout of %d) ms for %s",
                           gms.local_addr, max_wait_time, current_mbrs);
         }
+
+        MutableDigest retval=new MutableDigest(view.getMembersRaw());
         Map<Address,Digest> responses=new HashMap<Address,Digest>(digest_collector.getResults());
-        MutableDigest retval=new MutableDigest(view);
-        for(Digest dig: responses.values()) {
-            if(dig != null)
-                retval.set(dig);
-        }
+        for(Digest dig: responses.values())
+            retval.set(dig);
         return retval;
     }
 
@@ -716,11 +715,8 @@ public class Merger {
             if(new_coord == null)
                 return null;
             
-
-            ViewId new_vid=new ViewId(new_coord, logical_time + 1); // should be the highest view ID seen up to now plus 1
-
-            // determine the new view
-            MergeView new_view=new MergeView(new_vid, merged_mbrs, subgroups);
+            // determine the new view; logical_time should be the highest view ID seen up to now plus 1
+            MergeView new_view=new MergeView(new_coord, logical_time + 1, merged_mbrs, subgroups);
 
             // determine the new digest
             Digest new_digest=consolidateDigests(new_view, merge_rsps);
@@ -736,13 +732,11 @@ public class Merger {
          * max(highest_received). This method has a lock on merge_rsps
          */
         protected Digest consolidateDigests(final View new_view, final List<MergeData> merge_rsps) {
-            MutableDigest retval=new MutableDigest(new_view);
+            MutableDigest retval=new MutableDigest(new_view.getMembersRaw());
             for(MergeData data: merge_rsps) {
                 Digest tmp_digest=data.getDigest();
-                if(tmp_digest == null)
-                    continue;
-
-                retval.merge(tmp_digest);
+                if(tmp_digest != null)
+                    retval.merge(tmp_digest);
             }
             return retval;
         }

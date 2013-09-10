@@ -607,7 +607,7 @@ public class FLUSH extends Protocol {
     private long currentViewId() {
         long viewId = -1;
         synchronized (sharedLock) {
-            ViewId view = currentView.getVid();
+            ViewId view = currentView.getViewId();
             if (view != null) {
                 viewId = view.getId();
             }
@@ -878,7 +878,7 @@ public class FLUSH extends Protocol {
                 }
             }
         }
-        return new Digest(view, highest_seqnos);
+        return new Digest(view.getMembersRaw(), highest_seqnos);
     }
 
     private void onSuspect(Address address) {
@@ -1005,7 +1005,7 @@ public class FLUSH extends Protocol {
             retval += Util.size(flushParticipants);
             retval += Global.BYTE_SIZE; // presence for digest
             if (digest != null) {
-                retval += digest.serializedSize();
+                retval += digest.serializedSize(true);
             }
             return retval;
         }

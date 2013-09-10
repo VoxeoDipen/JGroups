@@ -668,7 +668,7 @@ public class GMS_MergeTest {
         for(JChannel ch: channels) {
             NAKACK2 nak=(NAKACK2)ch.getProtocolStack().findProtocol(NAKACK2.class);
             Digest digest=nak.getDigest();
-            System.out.println(ch.getName() + ": " + digest.toStringSorted());
+            System.out.println(ch.getName() + ": " + digest.toString());
         }
     }
 

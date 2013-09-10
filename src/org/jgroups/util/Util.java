@@ -2404,7 +2404,7 @@ public class Util {
 
     public static boolean containsViewId(Collection<View> views, ViewId vid) {
         for(View view: views) {
-            ViewId tmp=view.getVid();
+            ViewId tmp=view.getViewId();
             if(tmp.equals(vid))
                 return true;
         }
@@ -2426,7 +2426,7 @@ public class Util {
         for(View view: map.values()) {
             if(view == null)
                 continue;
-            ViewId vid=view.getVid();
+            ViewId vid=view.getViewId();
             if(!Util.containsViewId(ret, vid))
                 ret.add(view);
         }
@@ -2608,6 +2608,15 @@ public class Util {
         return createRandomAddress(generateLocalName());
     }
 
+    /** Returns an array of num random addresses, named A, B, C etc */
+    public static Address[] createRandomAddreses(int num) {
+        Address[] addresses=new Address[num];
+        char c='A';
+        for(int i=0; i < addresses.length; i++)
+            addresses[i]=Util.createRandomAddress(String.valueOf(c++));
+        return addresses;
+    }
+
     public static Address createRandomAddress(String name) {
         UUID retval=UUID.randomUUID();
         UUID.add(retval, name);
@@ -2650,7 +2659,7 @@ public class Util {
                 first=false;
             else
                 sb.append(", ");
-            sb.append(view.getVid());
+            sb.append(view.getViewId());
         }
         return sb.toString();
     }

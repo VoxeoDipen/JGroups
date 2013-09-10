@@ -103,7 +103,7 @@ public class NAKACK_StressTest {
         View view=View.create(local_addr, 1, local_addr, sender);
         nak.down(new Event(Event.VIEW_CHANGE, view));
 
-        MutableDigest digest=new MutableDigest(view);
+        MutableDigest digest=new MutableDigest(view.getMembersRaw());
         digest.set(local_addr,0,0);
         digest.set(sender,0,0);
         nak.down(new Event(Event.SET_DIGEST, digest));

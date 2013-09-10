@@ -227,7 +227,7 @@ public class SequencerMergeTest {
     }
 
     protected static Digest getDigest(final View view, JChannel ... channels) {
-        MutableDigest digest=new MutableDigest(view);
+        MutableDigest digest=new MutableDigest(view.getMembersRaw());
         for(JChannel ch: channels) {
             Protocol nak=ch.getProtocolStack().findProtocol(NAKACK.class, NAKACK2.class);
             Digest tmp=(Digest)nak.down(new Event(Event.GET_DIGEST, ch.getAddress()));

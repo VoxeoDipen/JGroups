@@ -65,7 +65,7 @@ public class NAKACK_Delivery_Test {
 
         // set a dummy digest
         View tmp_view=View.create(a, 1, a,b);
-        MutableDigest digest=new MutableDigest(tmp_view);
+        MutableDigest digest=new MutableDigest(tmp_view.getMembersRaw());
         digest.set(a,0,0);
         digest.set(b,0,0);
         nak.down(new Event(Event.SET_DIGEST,digest));

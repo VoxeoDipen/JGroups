@@ -197,16 +197,10 @@ public class CoordGmsImpl extends ServerGmsImpl {
             // of those messages if he misses them            
             if(hasJoiningMembers) {
                 gms.getDownProtocol().down(new Event(Event.SUSPEND_STABLE, MAX_SUSPEND_TIMEOUT));
-                Digest tmp=gms.getDigest(); // get existing digest
-                MutableDigest join_digest=null;
-                if(tmp == null)
-                    log.error("received null digest from GET_DIGEST: will cause JOIN to fail");
-                else {
-                    // create a new digest, which contains the new members, minus left members
-                    join_digest=new MutableDigest(new_view).set(tmp);
-                    for(Address member: new_mbrs)
-                        join_digest.set(member,0,0); // ... and set the new members. their first seqno will be 1
-                }
+                // create a new digest, which contains the new members, minus left members
+                MutableDigest join_digest=new MutableDigest(new_view.getMembersRaw()).set(gms.getDigest());
+                for(Address member: new_mbrs)
+                    join_digest.set(member,0,0); // ... and set the new members. their first seqno will be 1
                 join_rsp=new JoinRsp(new_view, join_digest);
             }
 

@@ -579,7 +579,7 @@ public class GMS extends Protocol implements DiagnosticsHandler.ProbeHandler {
         try {
             if(!ackMembers.isEmpty()) {
                 ack_collector.waitForAllAcks(view_ack_collection_timeout);
-                log.trace("%s: got all ACKs (%d) from members for view %s", local_addr, ack_collector.expectedAcks(), new_view.getVid());
+                log.trace("%s: got all ACKs (%d) from members for view %s", local_addr, ack_collector.expectedAcks(), new_view.getViewId());
             }
         }
         catch(TimeoutException e) {
@@ -596,7 +596,7 @@ public class GMS extends Protocol implements DiagnosticsHandler.ProbeHandler {
             try {
                 ack_collector.waitForAllAcks(view_ack_collection_timeout);
                 log.trace("%s: got all ACKs (%d) from joiners for view %s",
-                          local_addr, ack_collector.expectedAcks(), new_view.getVid());
+                          local_addr, ack_collector.expectedAcks(), new_view.getViewId());
             }
             catch(TimeoutException e) {
                 if(log_collect_msgs)
@@ -622,7 +622,7 @@ public class GMS extends Protocol implements DiagnosticsHandler.ProbeHandler {
      * of View), then digest will be non-null and has to be set before installing the view.
      */
     public synchronized void installView(View new_view, Digest digest) {
-        ViewId vid=new_view.getVid();
+        ViewId vid=new_view.getViewId();
         List<Address> mbrs=new_view.getMembers();
         ltime=Math.max(vid.getId(), ltime);  // compute the logical time, regardless of whether the view is accepted
 
@@ -817,11 +817,6 @@ public class GMS extends Protocol implements DiagnosticsHandler.ProbeHandler {
                 GmsHeader hdr=(GmsHeader)msg.getHeader(this.id);
                 if(hdr == null)
                     break;
-
-                // todo: remove again !!!
-                //if(hdr.my_digest != null) {
-                   // hdr.my_digest.view(view);
-                //}
 
                 switch(hdr.type) {
                     case GmsHeader.JOIN_REQ:
@@ -1150,10 +1145,7 @@ public class GMS extends Protocol implements DiagnosticsHandler.ProbeHandler {
         public GmsHeader(byte type, View view, Digest digest) {
             this.type=type;
             this.view=view;
-            if(digest != null) {
-                this.my_digest=digest;
-                this.my_digest.view(view);
-            }
+            this.my_digest=digest;
         }
 
 
@@ -1183,19 +1175,11 @@ public class GMS extends Protocol implements DiagnosticsHandler.ProbeHandler {
             return type;
         }
 
-        public GmsHeader view(View view)             {this.view=view; if(my_digest != null) my_digest.view(view); return this;}
+        public GmsHeader view(View view)             {this.view=view; return this;}
         public GmsHeader mbr(Address mbr)            {this.mbr=mbr; return this;}
         public GmsHeader mergeId(MergeId merge_id)   {this.merge_id=merge_id; return this;}
         public GmsHeader mergeRejected(boolean flag) {this.merge_rejected=flag; return this;}
-
-        public GmsHeader digest(Digest new_digest) {
-            if(new_digest != null) {
-                this.my_digest=new_digest;
-                if(view != null)
-                    this.my_digest.view(view);
-            }
-            return this;
-        }
+        public GmsHeader digest(Digest new_digest)   {this.my_digest=new_digest; return this;}
 
         public Address getMember() {
             return mbr;
@@ -1283,13 +1267,15 @@ public class GMS extends Protocol implements DiagnosticsHandler.ProbeHandler {
 
         public void writeTo(DataOutput out) throws Exception {
             out.writeByte(type);
-            boolean isMergeView=view != null && view instanceof MergeView;
-            out.writeBoolean(isMergeView);
-            Util.writeStreamable(view, out);
+            Util.writeView(view,out);
             Util.writeAddress(mbr, out);
             Util.writeAddresses(mbrs, out);
             Util.writeStreamable(join_rsp, out);
-            Util.writeStreamable(my_digest, out);
+
+            out.writeBoolean(my_digest != null);
+            if(my_digest != null)
+                my_digest.writeTo(out, writeAddresses());
+
             Util.writeStreamable(merge_id, out);
             out.writeBoolean(merge_rejected);
             out.writeBoolean(useFlushIfPresent);
@@ -1297,30 +1283,31 @@ public class GMS extends Protocol implements DiagnosticsHandler.ProbeHandler {
 
         public void readFrom(DataInput in) throws Exception {
             type=in.readByte();
-            boolean isMergeView=in.readBoolean();
-            if(isMergeView)
-                view=(View)Util.readStreamable(MergeView.class, in);
-            else
-                view=(View)Util.readStreamable(View.class, in);
+            view=Util.readView(in);
             mbr=Util.readAddress(in);
             mbrs=Util.readAddresses(in, ArrayList.class);
             join_rsp=(JoinRsp)Util.readStreamable(JoinRsp.class, in);
-            my_digest=(Digest)Util.readStreamable(Digest.class, in);
+
+            if(in.readBoolean()) {
+                if(!writeAddresses()) {
+                    my_digest=new Digest(view.getMembersRaw());
+                    my_digest.readFrom(in, false);
+                }
+                else {
+                    my_digest=new Digest();
+                    my_digest.readFrom(in);
+                }
+            }
+
             merge_id=(MergeId)Util.readStreamable(MergeId.class, in);
             merge_rejected=in.readBoolean();
             useFlushIfPresent=in.readBoolean();
-
-            if(my_digest != null && view != null)
-                my_digest.view(view);
         }
 
         public int size() {
             int retval=Global.BYTE_SIZE *2; // type + merge_rejected
 
-            retval+=Global.BYTE_SIZE; // presence view
-            retval+=Global.BYTE_SIZE; // MergeView or View
-            if(view != null)
-                retval+=view.serializedSize();
+            retval+=Util.size(view);
 
             retval+=Util.size(mbr);
 
@@ -1332,7 +1319,7 @@ public class GMS extends Protocol implements DiagnosticsHandler.ProbeHandler {
 
             retval+=Global.BYTE_SIZE; // presence for my_digest
             if(my_digest != null)
-                retval+=my_digest.serializedSize();
+                retval+=my_digest.serializedSize(writeAddresses());
 
             retval+=Global.BYTE_SIZE; // presence for merge_id
             if(merge_id != null)
@@ -1340,6 +1327,10 @@ public class GMS extends Protocol implements DiagnosticsHandler.ProbeHandler {
 
             retval+=Global.BYTE_SIZE; // boolean useFlushIfPresent
             return retval;
+        }
+
+        protected boolean writeAddresses() {
+            return !(type == MERGE_RSP || type == INSTALL_MERGE_VIEW);
         }
 
     }

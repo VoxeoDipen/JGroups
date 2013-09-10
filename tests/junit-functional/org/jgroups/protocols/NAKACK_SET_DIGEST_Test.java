@@ -29,8 +29,8 @@ public class NAKACK_SET_DIGEST_Test {
         v2=View.create(a, 2, a, b, c);
 
         nak=new NAKACK2();
-        d1=new Digest(v1, new long[]{11,11, 30,35});
-        d2=new Digest(v2, new long[]{10,10, 30,30, 50,50});
+        d1=new Digest(v1.getMembersRaw(), new long[]{11,11, 30,35});
+        d2=new Digest(v2.getMembersRaw(), new long[]{10,10, 30,30, 50,50});
 
         TP transport=new TP() {
             public boolean supportsMulticasting() {return false;}

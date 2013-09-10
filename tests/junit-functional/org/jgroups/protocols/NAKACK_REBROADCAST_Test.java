@@ -42,14 +42,14 @@ public class NAKACK_REBROADCAST_Test {
 
 		nak.start();
 
-        Digest digest=new Digest(view, new long[]{0, 0});
+        Digest digest=new Digest(view.getMembersRaw(), new long[]{0, 0});
         Event evt=new Event(Event.SET_DIGEST, digest);
         nak.down(evt);
     }
 
     @Test
     public void testRebroadcast() throws InterruptedException {
-        Digest digest=new Digest(view, new long[]{2, 2});
+        Digest digest=new Digest(view.getMembersRaw(), new long[]{2, 2});
         Event evt=new Event(Event.REBROADCAST, digest);
         nak.down(evt);
 
@@ -62,7 +62,7 @@ public class NAKACK_REBROADCAST_Test {
 
     @Test
     public void testRebroadcastSingle() throws InterruptedException {
-        Digest digest=new Digest(view, new long[]{1, 1});
+        Digest digest=new Digest(view.getMembersRaw(), new long[]{1, 1});
         Event evt=new Event(Event.REBROADCAST, digest);
         nak.down(evt);
 

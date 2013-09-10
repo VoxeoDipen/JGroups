@@ -77,7 +77,7 @@ public class ParticipantGmsImpl extends ServerGmsImpl {
      */
     public void handleJoinResponse(JoinRsp join_rsp) {
         View v=join_rsp.getView();
-        ViewId tmp_vid=v != null? v.getVid() : null;
+        ViewId tmp_vid=v != null? v.getViewId() : null;
         ViewId my_view=gms.getViewId();
         if(tmp_vid != null && my_view != null && tmp_vid.compareToIDs(my_view) > 0) {
             Digest d=join_rsp.getDigest();

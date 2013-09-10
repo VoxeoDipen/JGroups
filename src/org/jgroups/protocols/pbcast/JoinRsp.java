@@ -30,8 +30,6 @@ public class JoinRsp implements Streamable {
     public JoinRsp(View v, Digest d) {
         view=v;
         digest=d;
-        if(digest != null)
-            digest.view(view); // not usually needed, just a second line of defense
     }
 
     public JoinRsp(String fail_reason) {this.fail_reason=fail_reason;}
@@ -57,8 +55,8 @@ public class JoinRsp implements Streamable {
             view.writeTo(out);
 
         // 2. digest
-        if(digest != null) // if digest is present, view *has* to be present !
-            digest.writeTo(out);
+        if(digest != null)
+            digest.writeTo(out, false); // don't write the membership; it is already present in the view
 
         // 3. fail_reason
         if(fail_reason != null)
@@ -76,9 +74,8 @@ public class JoinRsp implements Streamable {
 
         // 2. digest
         if((flags & DIGEST_PRESENT) == DIGEST_PRESENT) {
-            digest=new Digest();
-            digest.readFrom(in);
-            digest.view(view);
+            digest=new Digest(view.getMembersRaw());
+            digest.readFrom(in, false);
         }
 
         // 3. fail_reason
@@ -93,7 +90,7 @@ public class JoinRsp implements Streamable {
             retval+=view.serializedSize();
 
         if(digest != null)
-            retval+=digest.serializedSize();
+            retval+=digest.serializedSize(false);
 
         if(fail_reason != null)
             retval+=fail_reason.length() +2;
@@ -102,10 +99,12 @@ public class JoinRsp implements Streamable {
 
     public String toString() {
         StringBuilder sb=new StringBuilder();
-        sb.append("view: ").append(view);
-        sb.append(", digest: ").append(digest);
+        if(view != null)
+            sb.append("view: ").append(view);
+        if(digest != null)
+            sb.append(", digest: ").append(digest);
         if(fail_reason != null)
-            sb.append(", fail reason: ").append(fail_reason);
+            sb.append("fail reason: ").append(fail_reason);
         return sb.toString();
     }
 }

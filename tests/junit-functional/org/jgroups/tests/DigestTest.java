@@ -5,7 +5,6 @@ package org.jgroups.tests;
 import org.jgroups.Address;
 import org.jgroups.Global;
 import org.jgroups.View;
-import org.jgroups.ViewId;
 import org.jgroups.util.Digest;
 import org.jgroups.util.MutableDigest;
 import org.jgroups.util.Util;
@@ -18,8 +17,6 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * @author Bela Ban
@@ -29,32 +26,32 @@ public class DigestTest {
     protected Digest         d, d2;
     protected MutableDigest  md;
     protected Address        a1, a2, a3;
-    protected View           view;
+    protected Address[]      members;
 
 
     @BeforeClass void beforeClass() throws Exception {
         a1=Util.createRandomAddress("a1");
         a2=Util.createRandomAddress("a2");
         a3=Util.createRandomAddress("a3");
-        view=View.create(a1,1,a1,a2,a3);
+        members=new Address[]{a1,a2,a3};
     }
 
     @BeforeMethod void beforeMethod() {
-        d=new Digest(view, new long[]{500,501, 26,26, 25,33});
-        md=new MutableDigest(view);
+        d=new Digest(members, new long[]{500,501, 26,26, 25,33});
+        md=new MutableDigest(members);
     }
 
 
     public void testConstructor1() {
-        Digest dd=new MutableDigest(view);
-        Assert.assertEquals(dd.capacity(), view.size());
+        Digest dd=new MutableDigest(members);
+        Assert.assertEquals(dd.capacity(),members.length);
     }
 
     public void testConstructor2() {
-        d=new Digest(view, new long[]{1,2,3,4,5,6});
+        d=new Digest(members, new long[]{1,2,3,4,5,6});
         System.out.println("d = " + d);
         try {
-            d=new Digest(view, new long[]{1,2,3,4,5,6,7});
+            d=new Digest(members, new long[]{1,2,3,4,5,6,7});
             assert false : "seqnos of length 7 should be thrown an exception";
         }
         catch(IllegalArgumentException ex) {
@@ -65,7 +62,6 @@ public class DigestTest {
     public void testCopyConstructor() {
         Digest digest=new Digest(d);
         assert digest.equals(d);
-        assert digest.viewId().equals(d.viewId());
     }
 
     public void testCopyConstructor2() {
@@ -83,43 +79,11 @@ public class DigestTest {
         Assert.assertEquals(d.capacity(),  3);
     }
 
-    public void testView() {
-        Assert.assertEquals(d.viewId(), view.getViewId());
-        Assert.assertEquals(d.view(), view);
-    }
-
-    public void testView2() {
-        ViewId view_id=d.viewId();
-        assert view_id != null;
-        d.view(view); // ignored
-        Assert.assertEquals(view_id, d.viewId());
-    }
 
     public void testViewId() throws Exception {
         byte[] buf=Util.streamableToByteBuffer(d);
         Digest digest=(Digest)Util.streamableFromByteBuffer(Digest.class,buf);
         System.out.println("digest = " + digest);
-        assert digest.view() == null;
-        assert digest.viewId() != null && digest.viewId().equals(view.getViewId());
-        View new_view=View.create(a1, 2, a1, a2, a3, Util.createRandomAddress("a4"));
-        digest.view(new_view); // will be ignored as it doesn't match current view-id
-        assert digest.viewId() != null && digest.viewId().equals(view.getViewId());
-
-        digest.view(view); // this will work as the view-ids match
-        System.out.println("digest = " + digest);
-        assert digest.view() != null && digest.view().equals(view);
-        assert digest.viewId() != null && digest.viewId().equals(view.getViewId());
-    }
-
-    public void testIncorrectView() {
-        View new_view=View.create(a1, 1, a1, a2, a3, Util.createRandomAddress("a4"));
-        try {
-            Digest digest=new Digest(new_view,new long[]{500,501, 26,26, 25,33});
-            assert false : "digest " + digest + " should not have been created as view and seqnos differ in size";
-        }
-        catch(IllegalArgumentException ex) {
-            System.out.println("got exception as expected: " + ex);
-        }
     }
 
     public void testContains() {
@@ -127,7 +91,7 @@ public class DigestTest {
     }
 
     public void testContainsAll() {
-        MutableDigest digest=new MutableDigest(view);
+        MutableDigest digest=new MutableDigest(members);
         digest.set(a1,1,1);
         digest.set(a2,1,1);
         assert digest.containsAll(a1, a2, a3);
@@ -150,8 +114,7 @@ public class DigestTest {
         Assert.assertEquals(d,md);
         System.out.println("d: " + d + "\nmd= " + md);
 
-        View new_view=View.create(a1,2,a1,a2);
-        md=new MutableDigest(new_view, new long[]{1,2,3,4});
+        md=new MutableDigest(members, new long[]{1,2,3,4});
         Assert.assertNotEquals(d,md);
     }
 
@@ -159,20 +122,14 @@ public class DigestTest {
         Digest digest=d;
         Assert.assertEquals(d,digest);
 
-        digest=new Digest(view, new long[]{500,501, 26,26, 25,33});
+        digest=new Digest(members, new long[]{500,501, 26,26, 25,33});
         Assert.assertEquals(d, digest);
 
-        digest=new Digest(view, new long[]{500,501, 26,26, 25,37});
+        digest=new Digest(members, new long[]{500,501, 26,26, 25,37});
         Assert.assertNotEquals(d,digest);
 
-        digest=new Digest(View.create(a1, 1, a1,a2), new long[]{500,501, 26,26});
+        digest=new MutableDigest(members, new long[]{500,501, 26,26});
         Assert.assertNotEquals(d,digest);
-
-        digest=new Digest(View.create(a1, 1, a1,a2), new long[]{500,501, 26,26});
-        Assert.assertNotEquals(d, digest);
-
-        digest=new Digest(View.create(a1, 2, a1,a2), new long[]{500,501, 26,26});
-        Assert.assertNotEquals(d, digest);
     }
 
 
@@ -196,6 +153,19 @@ public class DigestTest {
         Assert.assertEquals(seqnos[1], 201);
     }
 
+    public void testImmutablity() {
+        md=new MutableDigest(d);
+        System.out.println("d = " + d);
+        System.out.println("md = " + md);
+        long[] before=d.get(a1);
+        md.set(a1, 1, 1);
+        System.out.println("d = " + d);
+        System.out.println("md = " + md);
+        long[] after=d.get(a1);
+        Assert.assertEquals(after[0], before[0]);
+        Assert.assertEquals(after[1], before[1]);
+    }
+
 
     public void testSetDigest() {
         Digest tmp=md.copy();
@@ -205,7 +175,7 @@ public class DigestTest {
 
 
     public void testSetDigest2() {
-        MutableDigest tmp=new MutableDigest(view);
+        MutableDigest tmp=new MutableDigest(members);
         tmp.set(Util.createRandomAddress(),2,3); // ignored as view doesn't include this member
         tmp.set(Util.createRandomAddress(),2,3); // ditto
         tmp.set(a2,2,3);
@@ -228,10 +198,8 @@ public class DigestTest {
 
 
     public void testIncrementHighSeqno() {
-        md=new MutableDigest(view);
-        md.set(a1,1,100);
-        md.set(a2,3,300);
-        md.set(a3,7,700);
+        md=new MutableDigest(members);
+        md.set(a1,1,100).set(a2,3,300).set(a3,7,700);
 
         long tmp=md.get(a1)[0];
         md.set(a1,tmp + 1,tmp + 1);
@@ -254,7 +222,7 @@ public class DigestTest {
 
 
     public void testReplace() {
-        MutableDigest digest=new MutableDigest(view);
+        MutableDigest digest=new MutableDigest(members);
         digest.set(a1,1,1);
         digest.set(a2,2,2);
 
@@ -305,7 +273,7 @@ public class DigestTest {
 
 
     public void testMerge() {
-        MutableDigest digest=new MutableDigest(view, new long[]{499,502, 26,27, 26,35});
+        MutableDigest digest=new MutableDigest(members, new long[]{499,502, 26,27, 26,35});
 
         System.out.println("d: " + d);
         System.out.println("digest: " + digest);
@@ -330,7 +298,7 @@ public class DigestTest {
     public void testNonConflictingMerge() {
         Address ip1=Util.createRandomAddress("x"), ip2=Util.createRandomAddress("y");
         View tmp_view=View.create(a1,1,a1,a2,a3,ip1,ip2);
-        MutableDigest cons_d=new MutableDigest(tmp_view);
+        MutableDigest cons_d=new MutableDigest(tmp_view.getMembersRaw());
 
         cons_d.set(ip1,10,10);
         cons_d.set(ip2,20,20);
@@ -354,7 +322,7 @@ public class DigestTest {
 
 
     public void testConflictingMerge() {
-        MutableDigest new_d=new MutableDigest(view);
+        MutableDigest new_d=new MutableDigest(members);
         new_d.set(a1,450,501);
         new_d.set(a3,28,35);
         md=new MutableDigest(d);
@@ -389,7 +357,7 @@ public class DigestTest {
 
 
     public void testSerializedSize() throws Exception {
-        long len=d.serializedSize();
+        long len=d.serializedSize(true);
         byte[] buf=Util.streamableToByteBuffer(d);
         Assert.assertEquals(buf.length, len);
     }
@@ -404,13 +372,11 @@ public class DigestTest {
 
     public void testViewBasedMarshallingLargeView() throws Exception {
         final int DIGEST_SIZE=1000;
-        Address coord=Util.createRandomAddress("coord");
         long[] seqnos=new long[DIGEST_SIZE *2];
 
-        List<Address> members=new ArrayList<Address>(DIGEST_SIZE);
-        members.add(coord);
-        for(int i=1; i < DIGEST_SIZE; i++)
-            members.add(Util.createRandomAddress(String.valueOf(i)));
+        Address[] mbrs=new Address[DIGEST_SIZE];
+        for(int i=0; i < DIGEST_SIZE; i++)
+            mbrs[i]=Util.createRandomAddress(String.valueOf(i));
 
         for(int i=0; i < DIGEST_SIZE; i++) {
             int hd=(int)Util.random(Integer.MAX_VALUE);
@@ -418,17 +384,17 @@ public class DigestTest {
             seqnos[i*2 +1]=hd + Util.random(1000);
         }
 
-        View tmp_view=View.create(coord,5,members.toArray(new Address[]{coord}));
-        Digest digest=new Digest(tmp_view, seqnos);
+        Digest digest=new Digest(mbrs, seqnos);
 
         byte[] buf1=Util.streamableToByteBuffer(digest);
         System.out.println("buf1: " + buf1.length + " bytes");
 
         Digest digest1=(Digest)Util.streamableFromByteBuffer(Digest.class,buf1);
 
-        assert digest.equals(digest1);
-        assert digest.viewId().equals(tmp_view.getViewId());
         System.out.println("digest1 = " + digest1);
+        assert digest.equals(digest1);
+        assert digest.capacity() == digest1.capacity();
+
     }
 
 

@@ -294,7 +294,7 @@ public class MERGE3 extends Protocol {
         for(View view: map.values()) {
             if(view == null)
                 continue;
-            ViewId vid=view.getVid();
+            ViewId vid=view.getViewId();
             if(!Util.containsViewId(ret, vid))
                 ret.add(view);
         }

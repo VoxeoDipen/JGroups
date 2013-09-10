@@ -161,12 +161,12 @@ public class SizeTest {
         Address addr=Util.createRandomAddress();
         Address addr2=Util.createRandomAddress();
         View view=View.create(addr, 1, addr, addr2);
-        MutableDigest mutableDigest=new MutableDigest(view);
+        MutableDigest mutableDigest=new MutableDigest(view.getMembersRaw());
         mutableDigest.set(addr, 200, 205);
         mutableDigest.set(addr2, 104, 105);
         _testSize(mutableDigest);
 
-        Digest digest=new MutableDigest(view);
+        Digest digest=new MutableDigest(view.getMembersRaw());
         _testSize(digest);
     }
 
@@ -305,12 +305,12 @@ public class SizeTest {
         org.jgroups.protocols.pbcast.STABLE.StableHeader hdr;
         Address addr=UUID.randomUUID();
         View view=View.create(addr, 1, addr);
-        Digest digest=new Digest(view, new long[]{200, 205});
+        Digest digest=new Digest(view.getMembersRaw(), new long[]{200, 205});
 
-        hdr=new STABLE.StableHeader(STABLE.StableHeader.STABLE_GOSSIP, digest);
+        hdr=new STABLE.StableHeader(STABLE.StableHeader.STABLE_GOSSIP, digest, view.getViewId());
         _testSize(hdr);
 
-        hdr=new STABLE.StableHeader(STABLE.StableHeader.STABILITY, null);
+        hdr=new STABLE.StableHeader(STABLE.StableHeader.STABILITY, null, null);
         _testSize(hdr);
     }
 
@@ -509,7 +509,7 @@ public class SizeTest {
         Address a=Util.createRandomAddress("A"), b=Util.createRandomAddress("B"), c=Util.createRandomAddress("C");
         View v=View.create(a, 55, a, b, c);
 
-        MutableDigest digest=new MutableDigest(v);
+        MutableDigest digest=new MutableDigest(v.getMembersRaw());
         digest.set(a, 1000, 1050);
         digest.set(b, 700, 700);
         digest.set(c, 0, 0);
@@ -530,7 +530,7 @@ public class SizeTest {
             members[i]=Util.createRandomAddress("m" + i);
 
         View view=View.create(members[0], 53, members);
-        MutableDigest digest=new MutableDigest(view);
+        MutableDigest digest=new MutableDigest(view.getMembersRaw());
         for(Address member: members)
             digest.set(member, 70000, 100000);
 
@@ -557,6 +557,18 @@ public class SizeTest {
         Collection<Address> mbrs=new ArrayList<Address>();
         Collections.addAll(mbrs, UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
         hdr=new GMS.GmsHeader(GMS.GmsHeader.MERGE_REQ, mbrs);
+        _testSize(hdr);
+
+        Address[]     addresses=Util.createRandomAddreses(20);
+        View          view=View.create(addresses[0], 1, addresses);
+        MutableDigest digest=new MutableDigest(view.getMembersRaw());
+        for(int i=0; i < addresses.length; i++) {
+            long hd=Util.random(Integer.MAX_VALUE);
+            digest.set(addresses[i], hd, hd + Util.random(100000));
+        }
+
+        hdr=new GMS.GmsHeader(GMS.GmsHeader.MERGE_RSP, view, digest);
+        _testSize(hdr);
     }
 
 
@@ -826,7 +838,7 @@ public class SizeTest {
     }
 
     private static void _testSize(Digest digest) throws Exception {
-        long len=digest.serializedSize();
+        long len=digest.serializedSize(true);
         byte[] serialized_form=Util.streamableToByteBuffer(digest);
         System.out.println("digest = " + digest);
         System.out.println("size=" + len + ", serialized size=" + serialized_form.length);

@@ -307,7 +307,7 @@ public class RELAY extends Protocol {
             if(global_view == null || (data.global_view != null &&!global_view.equals(data.global_view))) {
                 global_view=data.global_view;
                 synchronized(this) {
-                    if(data.global_view.getVid().getId() > global_view_id)
+                    if(data.global_view.getViewId().getId() > global_view_id)
                         global_view_id=data.global_view.getViewId().getId();
                 }
                 if(present_global_views)
